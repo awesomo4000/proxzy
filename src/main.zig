@@ -20,16 +20,15 @@ pub fn main() !void {
         config.verbose,
     );
 
-    // Initialize HTTP client
-    var http_client = try client_mod.Client.init(allocator);
+    // Initialize HTTP client (stateless - each request uses per-request arena)
+    var http_client = try client_mod.Client.init();
     defer http_client.deinit();
 
-    // Create context
+    // Create context (no shared allocator - requests use per-request arenas)
     var ctx = proxy.Context{
         .config = config,
         .client = http_client,
         .logger = logger,
-        .allocator = allocator,
     };
 
     // Create server

@@ -74,14 +74,12 @@ pub const RequestHeader = struct {
 };
 
 pub const Client = struct {
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator) !Client {
+    pub fn init() !Client {
         const res = c.curl_global_init(c.CURL_GLOBAL_DEFAULT);
         if (res != c.CURLE_OK) {
             return error.CurlInitFailed;
         }
-        return .{ .allocator = allocator };
+        return .{};
     }
 
     pub fn deinit(_: *Client) void {
@@ -96,13 +94,15 @@ pub const Client = struct {
         connect_timeout_secs: c_long = 30,
     };
 
-    pub fn request(self: *Client, url: []const u8, options: RequestOptions) !Response {
+    /// Make an HTTP request. The allocator should be a per-request arena
+    /// that will be freed after the response is processed.
+    pub fn request(_: *Client, allocator: std.mem.Allocator, url: []const u8, options: RequestOptions) !Response {
         const curl = c.curl_easy_init() orelse return error.CurlEasyInitFailed;
         defer c.curl_easy_cleanup(curl);
 
         // Set URL
-        const url_z = try self.allocator.dupeZ(u8, url);
-        defer self.allocator.free(url_z);
+        const url_z = try allocator.dupeZ(u8, url);
+        defer allocator.free(url_z);
         _ = c.curl_easy_setopt(curl, c.CURLOPT_URL, url_z.ptr);
 
         // Set method
@@ -125,11 +125,11 @@ pub const Client = struct {
         defer if (header_list) |list| c.curl_slist_free_all(list);
 
         for (options.headers) |header| {
-            const header_str = try std.fmt.allocPrint(self.allocator, "{s}: {s}", .{ header.name, header.value });
-            defer self.allocator.free(header_str);
+            const header_str = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ header.name, header.value });
+            defer allocator.free(header_str);
             // Curl needs null-terminated string, but allocPrint returns sentinel-terminated
-            const header_z = try self.allocator.dupeZ(u8, header_str);
-            defer self.allocator.free(header_z);
+            const header_z = try allocator.dupeZ(u8, header_str);
+            defer allocator.free(header_z);
             header_list = c.curl_slist_append(header_list, header_z.ptr);
         }
         if (header_list) |list| {
@@ -158,17 +158,17 @@ pub const Client = struct {
 
         // Set up response collection
         var response_data = ResponseData{
-            .allocator = self.allocator,
+            .allocator = allocator,
             .body = .{},
             .headers = .{},
         };
         errdefer {
-            response_data.body.deinit(self.allocator);
+            response_data.body.deinit(allocator);
             for (response_data.headers.items) |header| {
-                self.allocator.free(header.name);
-                self.allocator.free(header.value);
+                allocator.free(header.name);
+                allocator.free(header.value);
             }
-            response_data.headers.deinit(self.allocator);
+            response_data.headers.deinit(allocator);
         }
 
         _ = c.curl_easy_setopt(curl, c.CURLOPT_WRITEFUNCTION, writeCallback);
@@ -190,9 +190,9 @@ pub const Client = struct {
 
         return Response{
             .status = @intCast(response_code),
-            .body = try response_data.body.toOwnedSlice(self.allocator),
+            .body = try response_data.body.toOwnedSlice(allocator),
             .headers = response_data.headers,
-            .allocator = self.allocator,
+            .allocator = allocator,
         };
     }
 };

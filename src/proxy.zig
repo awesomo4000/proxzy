@@ -8,7 +8,6 @@ pub const Context = struct {
     config: config_mod.Config,
     client: client_mod.Client,
     logger: logging_mod.Logger,
-    allocator: std.mem.Allocator,
 };
 
 pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !void {
@@ -35,13 +34,16 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
     // Get method string
     const method = @tagName(req.method);
 
+    // Use per-request arena allocator for thread safety
+    const allocator = res.arena;
+
     // Collect headers to forward (skip Host - curl sets it from URL)
     var headers_to_forward: std.ArrayList(client_mod.RequestHeader) = .{};
 
     var header_iter = req.headers.iterator();
     while (header_iter.next()) |header| {
         if (!std.ascii.eqlIgnoreCase(header.key, "host")) {
-            headers_to_forward.append(ctx.allocator, .{
+            headers_to_forward.append(allocator, .{
                 .name = header.key,
                 .value = header.value,
             }) catch continue;
@@ -54,8 +56,8 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
     // Log request
     ctx.logger.logRequest(method, path, req.headers, body);
 
-    // Make upstream request
-    const response = ctx.client.request(upstream_url, .{
+    // Make upstream request (pass per-request allocator for thread safety)
+    const response = ctx.client.request(allocator, upstream_url, .{
         .method = method,
         .headers = headers_to_forward.items,
         .body = body,
@@ -76,26 +78,21 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         ctx.logger.logResponse(res.status, res.body, elapsed);
         return;
     };
-    // Copy response body to httpz's arena (lives until response is sent)
-    const body_copy = res.arena.dupe(u8, response.body) catch {
-        res.status = 500;
-        res.body = "Internal Server Error: allocation failed";
-        return;
-    };
+    // Response body and headers are already allocated in res.arena (per-request),
+    // so they'll be automatically cleaned up when the request completes.
+    // No need to copy or manually deinit.
 
-    // Copy response headers to httpz's arena
+    // Copy response headers (values already in arena, but httpz needs its own copy)
     for (response.headers.items) |header| {
         res.headerOpts(header.name, header.value, .{ .dupe_name = true, .dupe_value = true }) catch continue;
     }
 
-    // Set status and body
+    // Set status and body (body already in arena)
     res.status = response.status;
-    res.body = body_copy;
+    res.body = response.body;
 
     const elapsed = std.time.milliTimestamp() - start_time;
-    ctx.logger.logResponse(response.status, body_copy, elapsed);
+    ctx.logger.logResponse(response.status, response.body, elapsed);
 
-    // Now safe to clean up curl response
-    var resp = response;
-    resp.deinit();
+    // No manual cleanup needed - arena handles it
 }

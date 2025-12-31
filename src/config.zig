@@ -1,5 +1,11 @@
 const std = @import("std");
 
+/// Transform function for request bodies (returns transformed body or null to keep original)
+pub const RequestTransform = *const fn (allocator: std.mem.Allocator, body: ?[]const u8) ?[]const u8;
+
+/// Transform function for response bodies (returns transformed body or null to keep original)
+pub const ResponseTransform = *const fn (allocator: std.mem.Allocator, body: []const u8) ?[]const u8;
+
 pub const Config = struct {
     port: u16 = 8080,
     upstream_url: []const u8 = "https://httpbin.org",
@@ -8,6 +14,8 @@ pub const Config = struct {
     log_responses: bool = true,
     log_file: ?[]const u8 = null,
     verbose: bool = false,
+    request_transform: ?RequestTransform = null,
+    response_transform: ?ResponseTransform = null,
 
     pub fn parse(allocator: std.mem.Allocator) !Config {
         var config = Config{};

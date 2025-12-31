@@ -50,8 +50,13 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         }
     }
 
-    // Get request body
-    const body = req.body();
+    // Get request body and apply transform if configured
+    var body = req.body();
+    if (ctx.config.request_transform) |transform| {
+        if (transform(allocator, body)) |transformed| {
+            body = transformed;
+        }
+    }
 
     // Log request
     ctx.logger.logRequest(method, path, req.headers, body);
@@ -88,12 +93,20 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         res.headerOpts(header.name, header.value, .{ .dupe_name = true, .dupe_value = true }) catch continue;
     }
 
+    // Apply response transform if configured
+    var final_body: []const u8 = response.body;
+    if (ctx.config.response_transform) |transform| {
+        if (transform(allocator, response.body)) |transformed| {
+            final_body = transformed;
+        }
+    }
+
     // Set status and body (body already in arena)
     res.status = response.status;
-    res.body = response.body;
+    res.body = final_body;
 
     const elapsed = std.time.milliTimestamp() - start_time;
-    ctx.logger.logResponse(response.status, response.body, elapsed);
+    ctx.logger.logResponse(response.status, final_body, elapsed);
 
     // No manual cleanup needed - arena handles it
 }

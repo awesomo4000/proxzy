@@ -1,52 +1,17 @@
 const std = @import("std");
-const httpz = @import("httpz");
-const proxy = @import("proxy");
-const client_mod = @import("client");
-const config_mod = @import("config");
-const logging_mod = @import("logging");
+const proxzy = @import("proxzy");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Parse configuration
-    const config = try config_mod.Config.parse(allocator);
+    // Parse configuration from CLI
+    const config = try proxzy.Config.parse(allocator);
 
-    // Initialize logger
-    const logger = logging_mod.Logger.init(
-        config.log_requests,
-        config.log_responses,
-        config.verbose,
-    );
-
-    // Initialize HTTP client (stateless - each request uses per-request arena)
-    var http_client = try client_mod.Client.init();
-    defer http_client.deinit();
-
-    // Create context (no shared allocator - requests use per-request arenas)
-    var ctx = proxy.Context{
-        .config = config,
-        .client = http_client,
-        .logger = logger,
-    };
-
-    // Create server
-    var server = try httpz.Server(*proxy.Context).init(allocator, .{
-        .port = config.port,
-    }, &ctx);
-    defer server.deinit();
-
-    // Set up router with catch-all route for proxying
-    var router = try server.router(.{});
-
-    // Register routes for all HTTP methods
-    router.get("/*", proxy.handleRequest, .{});
-    router.post("/*", proxy.handleRequest, .{});
-    router.put("/*", proxy.handleRequest, .{});
-    router.delete("/*", proxy.handleRequest, .{});
-    router.patch("/*", proxy.handleRequest, .{});
-    router.options("/*", proxy.handleRequest, .{});
+    // Initialize proxy
+    var proxy = try proxzy.Proxy.init(allocator, config);
+    defer proxy.deinit();
 
     std.debug.print(
         \\
@@ -57,8 +22,8 @@ pub fn main() !void {
         \\
         \\  Press Ctrl+C to stop
         \\
-    , .{ config.port, config.upstream_url });
+    , .{ proxy.port(), proxy.upstreamUrl() });
 
     // Start server (blocking)
-    try server.listen();
+    try proxy.listen();
 }

@@ -58,7 +58,22 @@ pub fn build(b: *std.Build) void {
     proxy_module.addImport("logging", logging_module);
     proxy_module.addImport("httpz", httpz.module("httpz"));
 
-    // Create main executable
+    // Create library module (for use as dependency)
+    const lib_module = b.createModule(.{
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    lib_module.addImport("httpz", httpz.module("httpz"));
+    lib_module.addImport("proxy", proxy_module);
+    lib_module.addImport("client", client_module);
+    lib_module.addImport("config", config_module);
+    lib_module.addImport("logging", logging_module);
+
+    // Expose library module for consumers
+    b.modules.put(b.dupe("proxzy"), lib_module) catch @panic("OOM");
+
+    // Create main executable (uses lib module)
     const exe = b.addExecutable(.{
         .name = "proxzy",
         .root_module = b.createModule(.{
@@ -66,12 +81,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "httpz", .module = httpz.module("httpz") },
-                .{ .name = "proxy", .module = proxy_module },
-                .{ .name = "client", .module = client_module },
-                .{ .name = "config", .module = config_module },
-                .{ .name = "logging", .module = logging_module },
-                .{ .name = "curl_c", .module = curl_c_module },
+                .{ .name = "proxzy", .module = lib_module },
             },
         }),
     });

@@ -92,6 +92,7 @@ pub const Client = struct {
         body: ?[]const u8 = null,
         timeout_secs: c_long = 120,
         connect_timeout_secs: c_long = 30,
+        ca_cert_path: ?[]const u8 = null,
     };
 
     /// Make an HTTP request. The allocator should be a per-request arena
@@ -149,8 +150,16 @@ pub const Client = struct {
         // SSL settings
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYPEER, @as(c_long, 1));
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYHOST, @as(c_long, 2));
-        // TODO: Embed CA bundle instead of relying on system path
-        _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, "/etc/ssl/cert.pem");
+
+        // CA certificate path - use provided path or fall back to system default
+        if (options.ca_cert_path) |ca_path| {
+            const ca_path_z = try allocator.dupeZ(u8, ca_path);
+            defer allocator.free(ca_path_z);
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, ca_path_z.ptr);
+        } else {
+            // Fall back to common system paths
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, "/etc/ssl/cert.pem");
+        }
 
         // Follow redirects
         _ = c.curl_easy_setopt(curl, c.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));

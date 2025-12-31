@@ -3,6 +3,7 @@ const std = @import("std");
 pub const Config = struct {
     port: u16 = 8080,
     upstream_url: []const u8 = "https://httpbin.org",
+    ca_cert_path: ?[]const u8 = null,
     log_requests: bool = true,
     log_responses: bool = true,
     log_file: ?[]const u8 = null,
@@ -32,6 +33,8 @@ pub const Config = struct {
                 config.log_responses = false;
             } else if (std.mem.startsWith(u8, arg, "--log-file=")) {
                 config.log_file = arg["--log-file=".len..];
+            } else if (std.mem.startsWith(u8, arg, "--ca-cert=")) {
+                config.ca_cert_path = arg["--ca-cert=".len..];
             } else if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--verbose")) {
                 config.verbose = true;
             } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
@@ -52,6 +55,7 @@ pub const Config = struct {
             \\Options:
             \\  --port=PORT           Listen port (default: 8080)
             \\  --upstream=URL        Upstream URL (default: https://httpbin.org)
+            \\  --ca-cert=PATH        CA certificate bundle for TLS (PEM format)
             \\  --log-requests        Log request details (default: on)
             \\  --no-log-requests     Disable request logging
             \\  --log-responses       Log response details (default: on)
@@ -62,6 +66,7 @@ pub const Config = struct {
             \\
             \\Example:
             \\  proxzy --port=8080 --upstream=https://example.com
+            \\  proxzy --ca-cert=/path/to/certs.pem --upstream=https://internal.corp
             \\
         ;
         std.debug.print("{s}\n", .{usage});

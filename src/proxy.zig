@@ -61,6 +61,7 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         .method = method,
         .headers = headers_to_forward.items,
         .body = body,
+        .ca_cert_path = ctx.config.ca_cert_path,
     }) catch |err| {
         ctx.logger.logError(err, "upstream request failed");
 

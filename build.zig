@@ -152,6 +152,23 @@ pub fn build(b: *std.Build) void {
     example_simple.linkLibrary(libcurl);
     example_simple.linkLibrary(mbedtls);
 
+    // Example: roundtrip transform
+    const example_roundtrip = b.addExecutable(.{
+        .name = "example-roundtrip-transform",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/roundtrip_transform.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "proxzy", .module = lib_module },
+            },
+        }),
+    });
+    example_roundtrip.linkLibC();
+    example_roundtrip.linkLibrary(libcurl);
+    example_roundtrip.linkLibrary(mbedtls);
+
     const example_step = b.step("examples", "Build examples");
     example_step.dependOn(&b.addInstallArtifact(example_simple, .{}).step);
+    example_step.dependOn(&b.addInstallArtifact(example_roundtrip, .{}).step);
 }

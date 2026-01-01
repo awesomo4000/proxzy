@@ -165,6 +165,7 @@ pub const Client = struct {
         _ = c.curl_easy_setopt(curl, c.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
         _ = c.curl_easy_setopt(curl, c.CURLOPT_MAXREDIRS, @as(c_long, 5));
 
+
         // Set up response collection
         var response_data = ResponseData{
             .allocator = allocator,

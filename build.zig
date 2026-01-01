@@ -33,12 +33,20 @@ pub fn build(b: *std.Build) void {
     });
     client_module.addImport("curl_c", curl_c_module);
 
+    // Create transform module
+    const transform_module = b.createModule(.{
+        .root_source_file = b.path("src/transform.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     // Create config module
     const config_module = b.createModule(.{
         .root_source_file = b.path("src/config.zig"),
         .target = target,
         .optimize = optimize,
     });
+    config_module.addImport("transform", transform_module);
 
     // Create logging module
     const logging_module = b.createModule(.{
@@ -56,6 +64,7 @@ pub fn build(b: *std.Build) void {
     proxy_module.addImport("client", client_module);
     proxy_module.addImport("config", config_module);
     proxy_module.addImport("logging", logging_module);
+    proxy_module.addImport("transform", transform_module);
     proxy_module.addImport("httpz", httpz.module("httpz"));
 
     // Create library module (for use as dependency)
@@ -69,6 +78,7 @@ pub fn build(b: *std.Build) void {
     lib_module.addImport("client", client_module);
     lib_module.addImport("config", config_module);
     lib_module.addImport("logging", logging_module);
+    lib_module.addImport("transform", transform_module);
 
     // Expose library module for consumers
     b.modules.put(b.dupe("proxzy"), lib_module) catch @panic("OOM");
@@ -118,4 +128,30 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(exe_tests);
     test_step.dependOn(&run_tests.step);
+
+    // Transform tests
+    const transform_tests = b.addTest(.{
+        .root_module = transform_module,
+    });
+    const run_transform_tests = b.addRunArtifact(transform_tests);
+    test_step.dependOn(&run_transform_tests.step);
+
+    // Example: simple transform
+    const example_simple = b.addExecutable(.{
+        .name = "example-simple-transform",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/simple_transform.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "proxzy", .module = lib_module },
+            },
+        }),
+    });
+    example_simple.linkLibC();
+    example_simple.linkLibrary(libcurl);
+    example_simple.linkLibrary(mbedtls);
+
+    const example_step = b.step("examples", "Build examples");
+    example_step.dependOn(&b.addInstallArtifact(example_simple, .{}).step);
 }

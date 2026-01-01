@@ -10,7 +10,7 @@ pub fn build(
 
     // Example: simple transform
     const example_simple = b.addExecutable(.{
-        .name = "example-simple-transform",
+        .name = "proxzy-transform-simple",
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/simple_transform.zig"),
             .target = lib_module.resolved_target,
@@ -27,7 +27,7 @@ pub fn build(
 
     // Example: roundtrip transform
     const example_roundtrip = b.addExecutable(.{
-        .name = "example-roundtrip-transform",
+        .name = "proxzy-transform-roundtrip",
         .root_module = b.createModule(.{
             .root_source_file = b.path("examples/roundtrip_transform.zig"),
             .target = lib_module.resolved_target,

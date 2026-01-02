@@ -1,4 +1,4 @@
-/// Example: Round-trip transform with stateful replacement
+/// Example: Round-trip middleware with stateful replacement
 ///
 /// Demonstrates:
 /// - Request: replaces "purple-lynx" with "[edit:color-animal-1234]"
@@ -16,7 +16,7 @@ pub fn main() !void {
     var proxy = try proxzy.Proxy.init(allocator, .{
         .port = 9234,
         .upstream_url = "https://httpbin.org",
-        .transform_factory = RoundtripTransform.create,
+        .middleware_factory = RoundtripMiddleware.create,
         .log_requests = false,
         .log_responses = false,
     });
@@ -24,8 +24,8 @@ pub fn main() !void {
 
     std.debug.print(
         \\
-        \\  Roundtrip Transform Example
-        \\  ===========================
+        \\  Roundtrip Middleware Example
+        \\  ============================
         \\  Listening on: http://127.0.0.1:{d}
         \\
         \\  Test with:
@@ -41,7 +41,7 @@ pub fn main() !void {
     try proxy.listen();
 }
 
-pub const RoundtripTransform = struct {
+pub const RoundtripMiddleware = struct {
     allocator: std.mem.Allocator,
     original: ?[]const u8,
     placeholder: []const u8,
@@ -49,8 +49,8 @@ pub const RoundtripTransform = struct {
     const SEARCH = "purple-lynx";
     const REPLACE = "[edit:color-animal-1234]";
 
-    pub fn create(allocator: std.mem.Allocator) ?proxzy.Transform {
-        const self = allocator.create(RoundtripTransform) catch return null;
+    pub fn create(allocator: std.mem.Allocator) ?proxzy.Middleware {
+        const self = allocator.create(RoundtripMiddleware) catch return null;
         self.* = .{
             .allocator = allocator,
             .original = null,
@@ -64,7 +64,7 @@ pub const RoundtripTransform = struct {
     }
 
     fn onRequest(ptr: *anyopaque, req: proxzy.Request) ?proxzy.Request {
-        const self: *RoundtripTransform = @ptrCast(@alignCast(ptr));
+        const self: *RoundtripMiddleware = @ptrCast(@alignCast(ptr));
 
         if (req.body == null or req.body.?.len == 0) {
             return null;
@@ -74,7 +74,7 @@ pub const RoundtripTransform = struct {
 
         // Check if body contains our search term
         if (std.mem.indexOf(u8, body, SEARCH) == null) {
-            std.debug.print("[Transform] Request: no '{s}' found, passing through\n", .{SEARCH});
+            std.debug.print("[Middleware] Request: no '{s}' found, passing through\n", .{SEARCH});
             return null;
         }
 
@@ -87,7 +87,7 @@ pub const RoundtripTransform = struct {
         var new_req = req.clone() catch return null;
         new_req.body = transformed;
 
-        std.debug.print("[Transform] Request:\n", .{});
+        std.debug.print("[Middleware] Request:\n", .{});
         std.debug.print("  Original:    \"{s}\"\n", .{body});
         std.debug.print("  Transformed: \"{s}\"\n", .{transformed});
         std.debug.print("  Stored mapping: '{s}' -> '{s}'\n", .{ REPLACE, SEARCH });
@@ -96,7 +96,7 @@ pub const RoundtripTransform = struct {
     }
 
     fn onResponse(ptr: *anyopaque, res: proxzy.Response) ?proxzy.Response {
-        const self: *RoundtripTransform = @ptrCast(@alignCast(ptr));
+        const self: *RoundtripMiddleware = @ptrCast(@alignCast(ptr));
 
         // Only restore if we have a stored mapping
         if (self.original == null) {
@@ -105,7 +105,7 @@ pub const RoundtripTransform = struct {
 
         // Check if response contains our placeholder
         if (std.mem.indexOf(u8, res.body, REPLACE)) |_| {
-            std.debug.print("[Transform] Response contains placeholder - proof transform worked!\n", .{});
+            std.debug.print("[Middleware] Response contains placeholder - proof middleware worked!\n", .{});
 
             // Restore original term
             const restored = replaceAll(self.allocator, res.body, REPLACE, self.original.?) catch return null;
@@ -113,11 +113,11 @@ pub const RoundtripTransform = struct {
             var new_res = res.clone() catch return null;
             new_res.body = restored;
 
-            std.debug.print("[Transform] Response: Restored '{s}' -> '{s}'\n", .{ REPLACE, self.original.? });
+            std.debug.print("[Middleware] Response: Restored '{s}' -> '{s}'\n", .{ REPLACE, self.original.? });
 
             return new_res;
         } else {
-            std.debug.print("[Transform] Response: no placeholder found (unexpected)\n", .{});
+            std.debug.print("[Middleware] Response: no placeholder found (unexpected)\n", .{});
             return null;
         }
     }

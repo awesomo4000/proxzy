@@ -1,5 +1,5 @@
 const std = @import("std");
-const transform_mod = @import("transform");
+const middleware_mod = @import("middleware");
 
 pub const Config = struct {
     port: u16 = 8080,
@@ -9,7 +9,7 @@ pub const Config = struct {
     log_responses: bool = true,
     log_file: ?[]const u8 = null,
     verbose: bool = false,
-    transform_factory: ?transform_mod.TransformFactory = null,
+    middleware_factory: ?middleware_mod.MiddlewareFactory = null,
 
     pub fn parse(allocator: std.mem.Allocator) !Config {
         var config = Config{};

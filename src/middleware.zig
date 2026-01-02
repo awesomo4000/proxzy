@@ -156,40 +156,40 @@ pub const Response = struct {
     }
 };
 
-/// Transform interface - per-request middleware instance
-pub const Transform = struct {
+/// Middleware interface - per-request handler instance
+pub const Middleware = struct {
     ptr: *anyopaque,
     onRequestFn: ?*const fn (ptr: *anyopaque, req: Request) ?Request,
     onResponseFn: ?*const fn (ptr: *anyopaque, res: Response) ?Response,
 
-    /// Transform a request. Returns modified request or null to use original.
-    pub fn onRequest(self: Transform, req: Request) ?Request {
+    /// Handle a request. Returns modified request or null to use original.
+    pub fn onRequest(self: Middleware, req: Request) ?Request {
         if (self.onRequestFn) |f| {
             return f(self.ptr, req);
         }
         return null;
     }
 
-    /// Transform a response. Returns modified response or null to use original.
-    pub fn onResponse(self: Transform, res: Response) ?Response {
+    /// Handle a response. Returns modified response or null to use original.
+    pub fn onResponse(self: Middleware, res: Response) ?Response {
         if (self.onResponseFn) |f| {
             return f(self.ptr, res);
         }
         return null;
     }
 
-    /// No-op transform (passthrough)
-    pub const passthrough = Transform{
+    /// No-op middleware (passthrough)
+    pub const passthrough = Middleware{
         .ptr = undefined,
         .onRequestFn = null,
         .onResponseFn = null,
     };
 };
 
-/// Factory function type - creates a Transform instance per request.
+/// Factory function type - creates a Middleware instance per request.
 /// Called with the per-request arena allocator.
-/// Return null to skip transformation for this request.
-pub const TransformFactory = *const fn (allocator: std.mem.Allocator) ?Transform;
+/// Return null to skip middleware for this request.
+pub const MiddlewareFactory = *const fn (allocator: std.mem.Allocator) ?Middleware;
 
 // Tests
 const testing = std.testing;
@@ -304,7 +304,7 @@ test "Response.clone creates independent copy" {
     try testing.expectEqualStrings("modified body", cloned.body);
 }
 
-test "Transform.passthrough returns null" {
+test "Middleware.passthrough returns null" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -320,6 +320,6 @@ test "Transform.passthrough returns null" {
         .body = null,
     };
 
-    const result = Transform.passthrough.onRequest(req);
+    const result = Middleware.passthrough.onRequest(req);
     try testing.expect(result == null);
 }

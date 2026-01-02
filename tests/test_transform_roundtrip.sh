@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test: proxzy-transform-roundtrip transforms body and restores it
+# Test: proxzy-transform-roundtrip middleware transforms body and restores it
 
 set -e
 

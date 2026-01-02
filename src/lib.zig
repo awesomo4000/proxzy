@@ -4,7 +4,7 @@ const proxy_mod = @import("proxy");
 const client_mod = @import("client");
 const config_mod = @import("config");
 const logging_mod = @import("logging");
-const transform_mod = @import("transform");
+const middleware_mod = @import("middleware");
 
 // Re-export config types
 pub const Config = config_mod.Config;
@@ -12,12 +12,12 @@ pub const Context = proxy_mod.Context;
 pub const Client = client_mod.Client;
 pub const Logger = logging_mod.Logger;
 
-// Re-export transform types
-pub const Transform = transform_mod.Transform;
-pub const TransformFactory = transform_mod.TransformFactory;
-pub const Request = transform_mod.Request;
-pub const Response = transform_mod.Response;
-pub const Header = transform_mod.Header;
+// Re-export middleware types
+pub const Middleware = middleware_mod.Middleware;
+pub const MiddlewareFactory = middleware_mod.MiddlewareFactory;
+pub const Request = middleware_mod.Request;
+pub const Response = middleware_mod.Response;
+pub const Header = middleware_mod.Header;
 
 /// HTTP proxy server wrapper
 pub const Proxy = struct {

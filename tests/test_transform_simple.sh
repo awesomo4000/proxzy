@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test: proxzy-transform-simple adds X-Request-Id header
+# Test: proxzy-transform-simple middleware adds X-Proxzy-Id header
 
 set -e
 
@@ -30,7 +30,7 @@ PROXY_PID=$!
 sleep 1
 
 # Test: make request and check for X-Proxzy-Id in httpbin's echoed headers
-echo "Testing simple transform (X-Proxzy-Id header)..."
+echo "Testing simple middleware (X-Proxzy-Id header)..."
 RESPONSE=$(curl -s http://localhost:$PORT/get)
 
 if echo "$RESPONSE" | grep -q "X-Proxzy-Id"; then

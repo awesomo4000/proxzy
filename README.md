@@ -41,7 +41,7 @@ curl http://localhost:8080/get
 
 ## Library Usage
 
-proxzy can be used as a Zig library dependency with custom request/response transforms:
+proxzy can be used as a Zig library dependency with custom middleware:
 
 ```zig
 const proxzy = @import("proxzy");
@@ -53,7 +53,7 @@ pub fn main() !void {
     var proxy = try proxzy.Proxy.init(allocator, .{
         .port = 8080,
         .upstream_url = "https://api.example.com",
-        .transform_factory = MyTransform.create,  // Optional
+        .middleware_factory = MyMiddleware.create,  // Optional
     });
     defer proxy.deinit();
 
@@ -63,16 +63,16 @@ pub fn main() !void {
 
 ## Examples
 
-Build and run the transform examples:
+Build and run the middleware examples:
 
 ```bash
 # Build examples
 zig build examples
 
-# Run simple transform (adds X-Proxzy-Id header)
+# Run simple middleware (adds X-Proxzy-Id header)
 ./zig-out/bin/proxzy-transform-simple
 
-# Run roundtrip transform (modifies request body, restores on response)
+# Run roundtrip middleware (modifies request body, restores on response)
 ./zig-out/bin/proxzy-transform-roundtrip
 ```
 

@@ -39,14 +39,53 @@ zig build
 curl http://localhost:8080/get
 ```
 
+## Library Usage
+
+proxzy can be used as a Zig library dependency with custom request/response transforms:
+
+```zig
+const proxzy = @import("proxzy");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var proxy = try proxzy.Proxy.init(allocator, .{
+        .port = 8080,
+        .upstream_url = "https://api.example.com",
+        .transform_factory = MyTransform.create,  // Optional
+    });
+    defer proxy.deinit();
+
+    try proxy.listen();
+}
+```
+
+## Examples
+
+Build and run the transform examples:
+
+```bash
+# Build examples
+zig build examples
+
+# Run simple transform (adds X-Proxzy-Id header)
+./zig-out/bin/proxzy-transform-simple
+
+# Run roundtrip transform (modifies request body, restores on response)
+./zig-out/bin/proxzy-transform-roundtrip
+```
+
+See `examples/` for full source code.
+
 ## Tests
 
 ```bash
-# Run parallel request test
-./tests/parallel_requests.sh
+# Run unit tests
+zig build test
 
-# Run stress test (50 requests, 25 parallel)
-./tests/stress_test.sh
+# Run integration tests
+./tests/run_all.sh
 ```
 
 ## Architecture

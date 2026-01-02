@@ -121,16 +121,21 @@ pub const Client = struct {
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CUSTOMREQUEST, "OPTIONS");
         }
 
-        // Set headers
+        // Set headers - must keep strings alive until after curl_easy_perform
         var header_list: ?*c.curl_slist = null;
         defer if (header_list) |list| c.curl_slist_free_all(list);
 
+        var header_strings: std.ArrayList([:0]u8) = .{};
+        defer {
+            for (header_strings.items) |s| allocator.free(s);
+            header_strings.deinit(allocator);
+        }
+
         for (options.headers) |header| {
             const header_str = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ header.name, header.value });
-            defer allocator.free(header_str);
-            // Curl needs null-terminated string, but allocPrint returns sentinel-terminated
             const header_z = try allocator.dupeZ(u8, header_str);
-            defer allocator.free(header_z);
+            allocator.free(header_str);
+            try header_strings.append(allocator, header_z);
             header_list = c.curl_slist_append(header_list, header_z.ptr);
         }
         if (header_list) |list| {

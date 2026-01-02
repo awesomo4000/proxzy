@@ -68,9 +68,9 @@ pub const SimpleTransform = struct {
 
         // Add custom header
         const id_str = std.fmt.allocPrint(self.allocator, "{d}", .{self.request_id}) catch return null;
-        new_req.setHeader("X-Request-Id", id_str) catch return null;
+        new_req.setHeader("X-Proxzy-Id", id_str) catch return null;
 
-        std.debug.print("[Transform] Request {d}: {s} {s} (added X-Request-Id)\n", .{
+        std.debug.print("[Transform] Request {d}: {s} {s} (added X-Proxzy-Id)\n", .{
             self.request_id,
             new_req.method,
             new_req.path,

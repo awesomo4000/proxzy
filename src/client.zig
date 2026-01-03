@@ -73,6 +73,59 @@ pub const RequestHeader = struct {
     value: []const u8,
 };
 
+/// Callback for streaming responses - called for each chunk of body data
+pub const StreamCallback = *const fn (ctx: *anyopaque, chunk: []const u8) void;
+
+/// Context for streaming write callback
+const StreamingResponseData = struct {
+    allocator: std.mem.Allocator,
+    headers: std.ArrayList(Response.Header),
+    stream_callback: StreamCallback,
+    stream_ctx: *anyopaque,
+    headers_done: bool = false,
+};
+
+fn streamingWriteCallback(ptr: [*c]u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize {
+    const data = @as(*StreamingResponseData, @ptrCast(@alignCast(userdata.?)));
+    const real_size = size * nmemb;
+    const chunk = ptr[0..real_size];
+
+    // Forward chunk directly to stream callback
+    data.stream_callback(data.stream_ctx, chunk);
+    return real_size;
+}
+
+fn streamingHeaderCallback(ptr: [*c]u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize {
+    const response_data = @as(*StreamingResponseData, @ptrCast(@alignCast(userdata.?)));
+    const real_size = size * nmemb;
+    const header_data = ptr[0..real_size];
+
+    // Parse header line (name: value)
+    const trimmed = std.mem.trim(u8, header_data, " \r\n");
+    if (trimmed.len == 0) return real_size;
+
+    // Skip status line
+    if (std.mem.startsWith(u8, trimmed, "HTTP/")) return real_size;
+
+    if (std.mem.indexOf(u8, trimmed, ": ")) |colon_pos| {
+        const name = response_data.allocator.dupe(u8, trimmed[0..colon_pos]) catch return 0;
+        const value = response_data.allocator.dupe(u8, trimmed[colon_pos + 2 ..]) catch {
+            response_data.allocator.free(name);
+            return 0;
+        };
+        response_data.headers.append(response_data.allocator, .{
+            .name = name,
+            .value = value,
+        }) catch {
+            response_data.allocator.free(name);
+            response_data.allocator.free(value);
+            return 0;
+        };
+    }
+
+    return real_size;
+}
+
 pub const Client = struct {
     pub fn init() !Client {
         const res = c.curl_global_init(c.CURL_GLOBAL_DEFAULT);
@@ -206,6 +259,158 @@ pub const Client = struct {
         return Response{
             .status = @intCast(response_code),
             .body = try response_data.body.toOwnedSlice(allocator),
+            .headers = response_data.headers,
+            .allocator = allocator,
+        };
+    }
+
+    /// Streaming response - headers only, body goes to callback
+    pub const StreamingResponse = struct {
+        status: u16,
+        headers: std.ArrayList(Response.Header),
+        allocator: std.mem.Allocator,
+
+        pub fn getHeader(self: *const StreamingResponse, name: []const u8) ?[]const u8 {
+            for (self.headers.items) |h| {
+                if (std.ascii.eqlIgnoreCase(h.name, name)) {
+                    return h.value;
+                }
+            }
+            return null;
+        }
+
+        pub fn deinit(self: *StreamingResponse) void {
+            for (self.headers.items) |header| {
+                self.allocator.free(header.name);
+                self.allocator.free(header.value);
+            }
+            self.headers.deinit(self.allocator);
+        }
+    };
+
+    pub const StreamingRequestOptions = struct {
+        method: []const u8 = "GET",
+        headers: []const RequestHeader = &.{},
+        body: ?[]const u8 = null,
+        ca_cert_path: ?[]const u8 = null,
+        /// Callback receives body chunks as they arrive
+        on_chunk: StreamCallback,
+        /// Context passed to on_chunk callback
+        chunk_ctx: *anyopaque,
+    };
+
+    /// Make a streaming HTTP request. Body data is passed to the callback
+    /// as it arrives. Returns only headers and status.
+    pub fn requestStreaming(
+        _: *Client,
+        allocator: std.mem.Allocator,
+        url: []const u8,
+        options: StreamingRequestOptions,
+    ) !StreamingResponse {
+        const curl = c.curl_easy_init() orelse return error.CurlEasyInitFailed;
+        defer c.curl_easy_cleanup(curl);
+
+        // Set URL
+        const url_z = try allocator.dupeZ(u8, url);
+        defer allocator.free(url_z);
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_URL, url_z.ptr);
+
+        // Set method
+        if (std.mem.eql(u8, options.method, "POST")) {
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_POST, @as(c_long, 1));
+        } else if (std.mem.eql(u8, options.method, "PUT")) {
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CUSTOMREQUEST, "PUT");
+        } else if (std.mem.eql(u8, options.method, "DELETE")) {
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CUSTOMREQUEST, "DELETE");
+        } else if (std.mem.eql(u8, options.method, "PATCH")) {
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CUSTOMREQUEST, "PATCH");
+        }
+
+        // Set headers
+        var header_list: ?*c.curl_slist = null;
+        defer if (header_list) |list| c.curl_slist_free_all(list);
+
+        var header_strings: std.ArrayList([:0]u8) = .{};
+        defer {
+            for (header_strings.items) |s| allocator.free(s);
+            header_strings.deinit(allocator);
+        }
+
+        for (options.headers) |header| {
+            const header_str = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ header.name, header.value });
+            const header_z = try allocator.dupeZ(u8, header_str);
+            allocator.free(header_str);
+            try header_strings.append(allocator, header_z);
+            header_list = c.curl_slist_append(header_list, header_z.ptr);
+        }
+        if (header_list) |list| {
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_HTTPHEADER, list);
+        }
+
+        // Set body
+        if (options.body) |body| {
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_POSTFIELDS, body.ptr);
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_POSTFIELDSIZE, @as(c_long, @intCast(body.len)));
+        }
+
+        // No timeout for streaming - SSE can be long-lived
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_TIMEOUT, @as(c_long, 0));
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_CONNECTTIMEOUT, @as(c_long, 30));
+
+        // Low-latency streaming settings
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_BUFFERSIZE, @as(c_long, 1024));
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_TCP_NODELAY, @as(c_long, 1)); // Disable Nagle
+
+        // SSL settings
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYPEER, @as(c_long, 1));
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYHOST, @as(c_long, 2));
+
+        if (options.ca_cert_path) |ca_path| {
+            const ca_path_z = try allocator.dupeZ(u8, ca_path);
+            defer allocator.free(ca_path_z);
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, ca_path_z.ptr);
+        } else {
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, "/etc/ssl/cert.pem");
+        }
+
+        // Follow redirects
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_MAXREDIRS, @as(c_long, 5));
+
+        // Set up streaming response collection
+        var response_data = StreamingResponseData{
+            .allocator = allocator,
+            .headers = .{},
+            .stream_callback = options.on_chunk,
+            .stream_ctx = options.chunk_ctx,
+        };
+        errdefer {
+            for (response_data.headers.items) |header| {
+                allocator.free(header.name);
+                allocator.free(header.value);
+            }
+            response_data.headers.deinit(allocator);
+        }
+
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_WRITEFUNCTION, streamingWriteCallback);
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_WRITEDATA, &response_data);
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_HEADERFUNCTION, streamingHeaderCallback);
+        _ = c.curl_easy_setopt(curl, c.CURLOPT_HEADERDATA, &response_data);
+
+        // Perform request - blocks until stream ends
+        const res = c.curl_easy_perform(curl);
+        if (res != c.CURLE_OK) {
+            const err_str = c.curl_easy_strerror(res);
+            std.debug.print("curl streaming error: {s}\n", .{err_str});
+            return error.CurlRequestFailed;
+        }
+
+        // Get response code
+        var response_code: c_long = 0;
+        _ = c.curl_easy_getinfo(curl, c.CURLINFO_RESPONSE_CODE, &response_code);
+
+        return StreamingResponse{
+            .status = @intCast(response_code),
             .headers = response_data.headers,
             .allocator = allocator,
         };

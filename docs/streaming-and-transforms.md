@@ -1,14 +1,13 @@
 # Streaming and Transforms
 
-> **⚠️ STATUS: NOT YET IMPLEMENTED**
+> **✅ STATUS: BASIC SSE PASSTHROUGH IMPLEMENTED**
 >
-> SSE streaming support is planned but not yet implemented. Currently, proxzy
-> buffers the entire response before forwarding, which means SSE/streaming
-> endpoints will fail with a curl timeout or "Failure when receiving data"
-> error.
+> SSE streaming passthrough is now working. Requests with `Accept: text/event-stream`
+> are detected and handled via a streaming code path that forwards chunks as they
+> arrive from upstream.
 >
-> This document describes the target architecture for when streaming is
-> implemented.
+> **Not yet implemented:** Streaming transforms (pattern matching across chunk
+> boundaries). Currently, middleware transforms only apply to non-streaming requests.
 
 ---
 

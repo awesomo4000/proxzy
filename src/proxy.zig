@@ -11,7 +11,116 @@ pub const Context = struct {
     logger: logging_mod.Logger,
 };
 
+/// Context passed to streaming callback
+const StreamContext = struct {
+    stream: std.net.Stream,
+    bytes_written: usize = 0,
+
+    fn writeChunk(ctx_ptr: *anyopaque, chunk: []const u8) void {
+        const self = @as(*StreamContext, @ptrCast(@alignCast(ctx_ptr)));
+        self.stream.writeAll(chunk) catch |err| {
+            std.debug.print("SSE write error: {}\n", .{err});
+        };
+        self.bytes_written += chunk.len;
+    }
+
+    /// Set TCP_NODELAY to disable Nagle's algorithm for low-latency streaming
+    fn setNoDelay(self: *StreamContext) void {
+        const TCP_NODELAY = 1; // from netinet/tcp.h
+        const value: c_int = 1;
+        std.posix.setsockopt(self.stream.handle, std.posix.IPPROTO.TCP, TCP_NODELAY, std.mem.asBytes(&value)) catch {};
+    }
+};
+
+/// Check if request wants SSE streaming
+fn isSSERequest(req: *httpz.Request) bool {
+    if (req.header("accept")) |accept| {
+        return std.mem.indexOf(u8, accept, "text/event-stream") != null;
+    }
+    return false;
+}
+
+/// Handle SSE streaming request
+fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !void {
+    const start_time = std.time.milliTimestamp();
+    const allocator = res.arena;
+
+    const method = @tagName(req.method);
+    const path = req.url.path;
+    const query = req.url.query;
+
+    // Build upstream URL
+    var upstream_url_buf: [4096]u8 = undefined;
+    const upstream_url = if (query.len > 0)
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}?{s}", .{ ctx.config.upstream_url, path, query }) catch {
+            res.status = 400;
+            res.body = "URL too long";
+            return;
+        }
+    else
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}", .{ ctx.config.upstream_url, path }) catch {
+            res.status = 400;
+            res.body = "URL too long";
+            return;
+        };
+
+    // Convert headers for client (skip Host)
+    var headers_to_forward: std.ArrayList(client_mod.RequestHeader) = .{};
+    var header_iter = req.headers.iterator();
+    while (header_iter.next()) |header| {
+        if (!std.ascii.eqlIgnoreCase(header.key, "host")) {
+            try headers_to_forward.append(allocator, .{
+                .name = header.key,
+                .value = header.value,
+            });
+        }
+    }
+
+    ctx.logger.logRequest(method, path, req.headers, req.body());
+
+    // Start SSE stream to client - this writes headers immediately
+    const client_stream = res.startEventStreamSync() catch |err| {
+        ctx.logger.logError(err, "failed to start SSE stream");
+        res.status = 500;
+        res.body = "Failed to start SSE stream";
+        return;
+    };
+
+    // Create streaming context
+    var stream_ctx = StreamContext{
+        .stream = client_stream,
+    };
+    stream_ctx.setNoDelay(); // Disable Nagle for low-latency streaming
+
+    // Make streaming upstream request - chunks go directly to client
+    var streaming_response = ctx.client.requestStreaming(allocator, upstream_url, .{
+        .method = method,
+        .headers = headers_to_forward.items,
+        .body = req.body(),
+        .ca_cert_path = ctx.config.ca_cert_path,
+        .on_chunk = StreamContext.writeChunk,
+        .chunk_ctx = @ptrCast(&stream_ctx),
+    }) catch |err| {
+        ctx.logger.logError(err, "SSE upstream request failed");
+        // Stream already started, close it
+        client_stream.close();
+        return;
+    };
+    defer streaming_response.deinit();
+
+    const elapsed = std.time.milliTimestamp() - start_time;
+    std.debug.print("[SSE] Streamed {d} bytes in {d}ms\n", .{ stream_ctx.bytes_written, elapsed });
+
+    // Close the client stream to signal end of SSE
+    client_stream.close();
+}
+
 pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !void {
+    // Check for SSE streaming request
+    if (isSSERequest(req)) {
+        return handleSSERequest(ctx, req, res);
+    }
+
     const start_time = std.time.milliTimestamp();
     const allocator = res.arena;
 

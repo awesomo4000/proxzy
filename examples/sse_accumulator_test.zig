@@ -68,8 +68,8 @@ pub fn main() !void {
         .data_ctx = @ptrCast(&ctx),
         .on_chunk = TestContext.onChunk,
         .chunk_ctx = @ptrCast(&ctx),
-        .on_sse_event = TestContext.onSSEEvent,
-        .sse_event_ctx = @ptrCast(&ctx),
+        .on_sse = TestContext.onSSE,
+        .sse_ctx = @ptrCast(&ctx),
     });
     defer response.deinit();
 
@@ -141,7 +141,7 @@ const TestContext = struct {
         std.debug.print("[chunk #{d}] {d} bytes\n", .{ self.chunk_count, chunk.len });
     }
 
-    fn onSSEEvent(ptr: *anyopaque, event: []const u8, _: std.mem.Allocator) ?[]const u8 {
+    fn onSSE(ptr: *anyopaque, event: []const u8, _: std.mem.Allocator) ?[]const u8 {
         const self: *TestContext = @ptrCast(@alignCast(ptr));
         self.event_count += 1;
         self.total_event_bytes += event.len;

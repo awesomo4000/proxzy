@@ -1,7 +1,7 @@
 /// Example: SSE Transform with JSON Field Extraction
 ///
 /// This demonstrates transforming SSE events by:
-/// 1. Receiving complete SSE events via on_sse_event callback
+/// 1. Receiving complete SSE messages via on_sse callback
 /// 2. Parsing the data: field from the SSE event
 /// 3. Parsing JSON from the data field
 /// 4. Extracting/transforming specific fields
@@ -67,8 +67,8 @@ pub fn main() !void {
     var response = try client.requestStreaming(allocator, url, .{
         .on_data = TransformContext.onData,
         .data_ctx = @ptrCast(&ctx),
-        .on_sse_event = TransformContext.onSSEEvent,
-        .sse_event_ctx = @ptrCast(&ctx),
+        .on_sse = TransformContext.onSSE,
+        .sse_ctx = @ptrCast(&ctx),
     });
     defer response.deinit();
 
@@ -89,7 +89,7 @@ const TransformContext = struct {
     events_passthrough: u32,
 
     /// Transform SSE events - extract and modify JSON content field
-    fn onSSEEvent(ptr: *anyopaque, event: []const u8, alloc: std.mem.Allocator) ?[]const u8 {
+    fn onSSE(ptr: *anyopaque, event: []const u8, alloc: std.mem.Allocator) ?[]const u8 {
         const self: *TransformContext = @ptrCast(@alignCast(ptr));
 
         // Parse SSE event to extract data field

@@ -14,7 +14,7 @@ pub const Logger = logging_mod.Logger;
 
 // Re-export client streaming types
 pub const StreamCallback = client_mod.StreamCallback;
-pub const SSEEventCallback = client_mod.SSEEventCallback;
+pub const SSECallback = client_mod.SSECallback;
 pub const RequestHeader = client_mod.RequestHeader;
 
 // Re-export middleware types

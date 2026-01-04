@@ -2,7 +2,7 @@
 ///
 /// This demonstrates the SSE callback system:
 /// - on_chunk: Called for each raw chunk (may be partial events)
-/// - on_sse_event: Called for complete SSE events (after \n\n boundary)
+/// - on_sse: Called for complete SSE messages (after \n\n boundary)
 /// - on_data: Output callback for writing to client
 ///
 /// Usage:
@@ -70,8 +70,8 @@ pub fn main() !void {
         .chunk_ctx = @ptrCast(&ctx),
 
         // Optional: SSE event callback (triggers accumulation)
-        .on_sse_event = LoggingContext.onSSEEvent,
-        .sse_event_ctx = @ptrCast(&ctx),
+        .on_sse = LoggingContext.onSSE,
+        .sse_ctx = @ptrCast(&ctx),
     });
     defer response.deinit();
 
@@ -105,7 +105,7 @@ const LoggingContext = struct {
 
     /// Called for each complete SSE event (after \n\n boundary)
     /// Return transformed bytes or null for passthrough
-    fn onSSEEvent(ptr: *anyopaque, event: []const u8, _: std.mem.Allocator) ?[]const u8 {
+    fn onSSE(ptr: *anyopaque, event: []const u8, _: std.mem.Allocator) ?[]const u8 {
         const self: *LoggingContext = @ptrCast(@alignCast(ptr));
         self.event_count += 1;
 

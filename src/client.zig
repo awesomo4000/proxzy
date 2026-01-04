@@ -78,7 +78,7 @@ pub const StreamCallback = *const fn (ctx: *anyopaque, chunk: []const u8) void;
 
 /// Callback for complete SSE events - called after accumulating until \n\n
 /// Return transformed event bytes, or null to passthrough original
-pub const SSEEventCallback = *const fn (ctx: *anyopaque, event: []const u8, allocator: std.mem.Allocator) ?[]const u8;
+pub const SSECallback = *const fn (ctx: *anyopaque, event: []const u8, allocator: std.mem.Allocator) ?[]const u8;
 
 /// Context for streaming write callback
 const StreamingResponseData = struct {
@@ -90,8 +90,8 @@ const StreamingResponseData = struct {
     stream_ctx: ?*anyopaque = null,
 
     // SSE event callback (optional) - if set, we accumulate
-    sse_event_callback: ?SSEEventCallback = null,
-    sse_event_ctx: ?*anyopaque = null,
+    sse_callback: ?SSECallback = null,
+    sse_ctx: ?*anyopaque = null,
 
     // Accumulation buffer for SSE events
     pending: std.ArrayList(u8) = .{},
@@ -112,7 +112,7 @@ fn streamingWriteCallback(ptr: [*c]u8, size: usize, nmemb: usize, userdata: ?*an
     }
 
     // If SSE event callback is set, accumulate and process complete events
-    if (data.sse_event_callback != null) {
+    if (data.sse_callback != null) {
         // Append chunk to pending buffer
         data.pending.appendSlice(data.allocator, chunk) catch return 0;
 
@@ -132,8 +132,8 @@ fn processCompleteEvents(data: *StreamingResponseData) void {
         const event = data.pending.items[0..end_pos];
 
         // Call SSE event callback for transformation
-        const output = if (data.sse_event_callback) |cb| blk: {
-            const transformed = cb(data.sse_event_ctx.?, event, data.allocator);
+        const output = if (data.sse_callback) |cb| blk: {
+            const transformed = cb(data.sse_ctx.?, event, data.allocator);
             break :blk transformed orelse event;
         } else event;
 
@@ -367,9 +367,9 @@ pub const Client = struct {
 
         /// Optional: SSE event callback - if set, chunks are accumulated until \n\n
         /// Return transformed event bytes, or null for passthrough
-        on_sse_event: ?SSEEventCallback = null,
-        /// Context passed to on_sse_event callback
-        sse_event_ctx: ?*anyopaque = null,
+        on_sse: ?SSECallback = null,
+        /// Context passed to on_sse callback
+        sse_ctx: ?*anyopaque = null,
     };
 
     /// Make a streaming HTTP request. Body data is passed to the callback
@@ -456,8 +456,8 @@ pub const Client = struct {
             .headers = .{},
             .stream_callback = options.on_chunk,
             .stream_ctx = options.chunk_ctx,
-            .sse_event_callback = options.on_sse_event,
-            .sse_event_ctx = options.sse_event_ctx,
+            .sse_callback = options.on_sse,
+            .sse_ctx = options.sse_ctx,
             .output_callback = options.on_data,
             .output_ctx = options.data_ctx,
         };

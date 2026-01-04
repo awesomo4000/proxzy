@@ -667,6 +667,184 @@ test "processCompleteEvents handles multiple events" {
     try testing.expectEqualStrings("data: partial", data.pending.items);
 }
 
+test "findEventBoundary edge cases" {
+    const testing = std.testing;
+
+    // Empty input
+    try testing.expectEqual(@as(?usize, null), findEventBoundary(""));
+
+    // Single newline
+    try testing.expectEqual(@as(?usize, null), findEventBoundary("\n"));
+
+    // Just the boundary (empty event)
+    try testing.expectEqual(@as(?usize, 2), findEventBoundary("\n\n"));
+
+    // Multiple consecutive boundaries
+    try testing.expectEqual(@as(?usize, 2), findEventBoundary("\n\n\n\n"));
+
+    // Boundary with trailing content
+    try testing.expectEqual(@as(?usize, 2), findEventBoundary("\n\ntrailing"));
+
+    // Very long line without boundary
+    const long_line = "data: " ++ "x" ** 10000;
+    try testing.expectEqual(@as(?usize, null), findEventBoundary(long_line));
+
+    // Long line WITH boundary
+    const long_with_boundary = "data: " ++ "x" ** 1000 ++ "\n\n";
+    try testing.expectEqual(@as(?usize, 1008), findEventBoundary(long_with_boundary));
+
+    // Only spaces and newlines (no double newline)
+    try testing.expectEqual(@as(?usize, null), findEventBoundary("   \n   \n   "));
+
+    // Spaces before boundary
+    try testing.expectEqual(@as(?usize, 5), findEventBoundary("   \n\n"));
+
+    // CRLF should NOT match (SSE uses LF only)
+    try testing.expectEqual(@as(?usize, null), findEventBoundary("data: test\r\n\r\n"));
+
+    // Mixed: has \n\n somewhere
+    try testing.expectEqual(@as(?usize, 12), findEventBoundary("data: test\n\nmore\r\n"));
+}
+
+test "processCompleteEvents edge cases - empty and zero length" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Empty buffer - should not crash
+    processCompleteEvents(&data);
+    try testing.expectEqual(@as(usize, 0), output_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+
+    // Just boundary (empty event) - valid SSE
+    try data.pending.appendSlice(allocator, "\n\n");
+    processCompleteEvents(&data);
+    try testing.expectEqualStrings("\n\n", output_buf.items);
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+}
+
+test "processCompleteEvents edge cases - boundary split across chunks" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // First chunk ends with first \n of boundary
+    try data.pending.appendSlice(allocator, "data: test\n");
+    processCompleteEvents(&data);
+    try testing.expectEqual(@as(usize, 0), output_buf.items.len); // Not yet complete
+
+    // Second chunk has the second \n
+    try data.pending.appendSlice(allocator, "\n");
+    processCompleteEvents(&data);
+    try testing.expectEqualStrings("data: test\n\n", output_buf.items);
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+}
+
+test "processCompleteEvents edge cases - large event" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Large event (simulating big JSON payload)
+    const large_data = "data: " ++ "x" ** 100000 ++ "\n\n";
+    try data.pending.appendSlice(allocator, large_data);
+    processCompleteEvents(&data);
+
+    try testing.expectEqual(large_data.len, output_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+}
+
+test "processCompleteEvents edge cases - many small events" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Add 100 small events at once
+    for (0..100) |_| {
+        try data.pending.appendSlice(allocator, "data: x\n\n");
+    }
+
+    processCompleteEvents(&data);
+
+    // All 100 events should be output (each is 9 bytes)
+    try testing.expectEqual(@as(usize, 900), output_buf.items.len);
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+}
+
+test "processCompleteEvents edge cases - binary data" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Binary data with null bytes (should still find \n\n)
+    const binary_event = "data: \x00\x01\x02\xff\n\n";
+    try data.pending.appendSlice(allocator, binary_event);
+    processCompleteEvents(&data);
+
+    try testing.expectEqualSlices(u8, binary_event, output_buf.items);
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+}
+
 /// Test helper for capturing output
 const OutputContext = struct {
     buf: *std.ArrayList(u8),

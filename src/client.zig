@@ -500,3 +500,180 @@ pub const Client = struct {
         };
     }
 };
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+test "findEventBoundary finds \\n\\n boundary" {
+    const testing = std.testing;
+
+    // Complete event
+    try testing.expectEqual(@as(?usize, 12), findEventBoundary("data: test\n\n"));
+
+    // Multiple events - finds first
+    try testing.expectEqual(@as(?usize, 12), findEventBoundary("data: test\n\ndata: more\n\n"));
+
+    // No boundary
+    try testing.expectEqual(@as(?usize, null), findEventBoundary("data: test\n"));
+    try testing.expectEqual(@as(?usize, null), findEventBoundary("incomplete"));
+
+    // Empty
+    try testing.expectEqual(@as(?usize, null), findEventBoundary(""));
+
+    // Just boundary
+    try testing.expectEqual(@as(?usize, 2), findEventBoundary("\n\n"));
+
+    // Boundary at start with more data
+    try testing.expectEqual(@as(?usize, 2), findEventBoundary("\n\nmore"));
+}
+
+test "findEventBoundary handles various SSE formats" {
+    const testing = std.testing;
+
+    // Standard data event
+    try testing.expectEqual(@as(?usize, 18), findEventBoundary("data: hello world\n\n"));
+
+    // Event with id and data
+    try testing.expectEqual(@as(?usize, 22), findEventBoundary("id: 1\ndata: message\n\n"));
+
+    // JSON data
+    try testing.expectEqual(@as(?usize, 27), findEventBoundary("data: {\"key\": \"value\"}\n\n"));
+
+    // Multi-line data (single \n between lines)
+    try testing.expectEqual(@as(?usize, 24), findEventBoundary("data: line1\ndata: line2\n\n"));
+}
+
+test "processCompleteEvents extracts single event" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Add a complete event
+    try data.pending.appendSlice(allocator, "data: test\n\n");
+
+    processCompleteEvents(&data);
+
+    // Event should be output
+    try testing.expectEqualStrings("data: test\n\n", output_buf.items);
+
+    // Buffer should be empty
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+}
+
+test "processCompleteEvents handles partial events" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Add incomplete event (no \n\n yet)
+    try data.pending.appendSlice(allocator, "data: partial");
+
+    processCompleteEvents(&data);
+
+    // Nothing should be output
+    try testing.expectEqual(@as(usize, 0), output_buf.items.len);
+
+    // Buffer should retain partial data
+    try testing.expectEqualStrings("data: partial", data.pending.items);
+}
+
+test "processCompleteEvents accumulates fragments" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Fragment 1
+    try data.pending.appendSlice(allocator, "data: ");
+    processCompleteEvents(&data);
+    try testing.expectEqual(@as(usize, 0), output_buf.items.len);
+
+    // Fragment 2
+    try data.pending.appendSlice(allocator, "hello");
+    processCompleteEvents(&data);
+    try testing.expectEqual(@as(usize, 0), output_buf.items.len);
+
+    // Fragment 3 - completes the event
+    try data.pending.appendSlice(allocator, "\n\n");
+    processCompleteEvents(&data);
+
+    // Now event should be output
+    try testing.expectEqualStrings("data: hello\n\n", output_buf.items);
+    try testing.expectEqual(@as(usize, 0), data.pending.items.len);
+}
+
+test "processCompleteEvents handles multiple events" {
+    const testing = std.testing;
+    const allocator = testing.allocator;
+
+    var output_buf: std.ArrayList(u8) = .{};
+    defer output_buf.deinit(allocator);
+
+    var ctx = OutputContext{ .buf = &output_buf, .allocator = allocator };
+
+    var data = StreamingResponseData{
+        .allocator = allocator,
+        .headers = .{},
+        .output_callback = OutputContext.write,
+        .output_ctx = @ptrCast(&ctx),
+    };
+    defer data.pending.deinit(allocator);
+
+    // Add two complete events and a partial
+    try data.pending.appendSlice(allocator, "data: one\n\ndata: two\n\ndata: partial");
+
+    processCompleteEvents(&data);
+
+    // Two events should be output
+    try testing.expectEqualStrings("data: one\n\ndata: two\n\n", output_buf.items);
+
+    // Partial should remain
+    try testing.expectEqualStrings("data: partial", data.pending.items);
+}
+
+/// Test helper for capturing output
+const OutputContext = struct {
+    buf: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+
+    fn write(ptr: *anyopaque, chunk: []const u8) void {
+        const self: *OutputContext = @ptrCast(@alignCast(ptr));
+        self.buf.appendSlice(self.allocator, chunk) catch {};
+    }
+};

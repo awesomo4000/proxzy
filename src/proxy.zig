@@ -108,6 +108,7 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
         .body = req.body(),
         .ca_cert_path = ctx.config.ca_cert_path,
         .ca_cert_blob = ctx.config.ca_cert_blob,
+        .use_embedded_ca = ctx.config.use_embedded_ca,
         .on_data = StreamContext.writeChunk,
         .data_ctx = @ptrCast(&stream_ctx),
     }) catch |err| {
@@ -208,6 +209,7 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         .body = mw_req.body,
         .ca_cert_path = ctx.config.ca_cert_path,
         .ca_cert_blob = ctx.config.ca_cert_blob,
+        .use_embedded_ca = ctx.config.use_embedded_ca,
     }) catch |err| {
         ctx.logger.logError(err, "upstream request failed");
 

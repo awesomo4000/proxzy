@@ -2,6 +2,9 @@ const std = @import("std");
 const curl_c = @import("curl_c");
 const c = curl_c.c;
 
+/// Embedded Mozilla CA certificate bundle (from curl.se/ca/cacert.pem)
+const embedded_cacert = @embedFile("cacert.pem");
+
 pub const Response = struct {
     status: u16,
     body: []u8,
@@ -208,6 +211,7 @@ pub const Client = struct {
         connect_timeout_secs: c_long = 30,
         ca_cert_path: ?[]const u8 = null,
         ca_cert_blob: ?[]const u8 = null,
+        use_embedded_ca: bool = true,
     };
 
     /// Make an HTTP request. The allocator should be a per-request arena
@@ -271,27 +275,46 @@ pub const Client = struct {
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYPEER, @as(c_long, 1));
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYHOST, @as(c_long, 2));
 
-        // CA certificate - priority: CLI path > embedded blob > system default
+        // CA certificate - priority: path > (embedded + blob) > embedded > blob > system
         if (options.ca_cert_path) |ca_path| {
             const ca_path_z = try allocator.dupeZ(u8, ca_path);
             defer allocator.free(ca_path_z);
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, ca_path_z.ptr);
+        } else if (options.use_embedded_ca and options.ca_cert_blob != null) {
+            // Concatenate embedded + user blob
+            const user_blob = options.ca_cert_blob.?;
+            const combined = try allocator.alloc(u8, embedded_cacert.len + 1 + user_blob.len);
+            @memcpy(combined[0..embedded_cacert.len], embedded_cacert);
+            combined[embedded_cacert.len] = '\n';
+            @memcpy(combined[embedded_cacert.len + 1 ..], user_blob);
+            const cert_blob = c.curl_blob{
+                .data = @ptrCast(combined.ptr),
+                .len = combined.len,
+                .flags = c.CURL_BLOB_COPY,
+            };
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
+        } else if (options.use_embedded_ca) {
+            // Use embedded certs only
+            const cert_blob = c.curl_blob{
+                .data = @ptrCast(@constCast(embedded_cacert.ptr)),
+                .len = embedded_cacert.len,
+                .flags = c.CURL_BLOB_NOCOPY,
+            };
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
         } else if (options.ca_cert_blob) |cert_data| {
+            // User blob only (embedded disabled)
             const cert_blob = c.curl_blob{
                 .data = @ptrCast(@constCast(cert_data.ptr)),
                 .len = cert_data.len,
                 .flags = c.CURL_BLOB_NOCOPY,
             };
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
-        } else {
-            // Fall back to common system paths
-            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, "/etc/ssl/cert.pem");
         }
+        // No fallback - if embedded is disabled and no certs provided, curl will fail
 
         // Follow redirects
         _ = c.curl_easy_setopt(curl, c.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));
         _ = c.curl_easy_setopt(curl, c.CURLOPT_MAXREDIRS, @as(c_long, 5));
-
 
         // Set up response collection
         var response_data = ResponseData{
@@ -363,6 +386,7 @@ pub const Client = struct {
         body: ?[]const u8 = null,
         ca_cert_path: ?[]const u8 = null,
         ca_cert_blob: ?[]const u8 = null,
+        use_embedded_ca: bool = true,
 
         /// Output callback - receives data to write to client
         on_data: StreamCallback,
@@ -447,21 +471,42 @@ pub const Client = struct {
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYPEER, @as(c_long, 1));
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYHOST, @as(c_long, 2));
 
-        // CA certificate - priority: CLI path > embedded blob > system default
+        // CA certificate - priority: path > (embedded + blob) > embedded > blob > system
         if (options.ca_cert_path) |ca_path| {
             const ca_path_z = try allocator.dupeZ(u8, ca_path);
             defer allocator.free(ca_path_z);
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, ca_path_z.ptr);
+        } else if (options.use_embedded_ca and options.ca_cert_blob != null) {
+            // Concatenate embedded + user blob
+            const user_blob = options.ca_cert_blob.?;
+            const combined = try allocator.alloc(u8, embedded_cacert.len + 1 + user_blob.len);
+            @memcpy(combined[0..embedded_cacert.len], embedded_cacert);
+            combined[embedded_cacert.len] = '\n';
+            @memcpy(combined[embedded_cacert.len + 1 ..], user_blob);
+            const cert_blob = c.curl_blob{
+                .data = @ptrCast(combined.ptr),
+                .len = combined.len,
+                .flags = c.CURL_BLOB_COPY,
+            };
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
+        } else if (options.use_embedded_ca) {
+            // Use embedded certs only
+            const cert_blob = c.curl_blob{
+                .data = @ptrCast(@constCast(embedded_cacert.ptr)),
+                .len = embedded_cacert.len,
+                .flags = c.CURL_BLOB_NOCOPY,
+            };
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
         } else if (options.ca_cert_blob) |cert_data| {
+            // User blob only (embedded disabled)
             const cert_blob = c.curl_blob{
                 .data = @ptrCast(@constCast(cert_data.ptr)),
                 .len = cert_data.len,
                 .flags = c.CURL_BLOB_NOCOPY,
             };
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
-        } else {
-            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, "/etc/ssl/cert.pem");
         }
+        // No fallback - if embedded is disabled and no certs provided, curl will fail
 
         // Follow redirects
         _ = c.curl_easy_setopt(curl, c.CURLOPT_FOLLOWLOCATION, @as(c_long, 1));

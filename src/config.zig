@@ -6,6 +6,7 @@ pub const Config = struct {
     upstream_url: ?[]const u8 = null,
     ca_cert_path: ?[]const u8 = null,
     ca_cert_blob: ?[]const u8 = null,
+    use_embedded_ca: bool = true,
     log_requests: bool = true,
     log_responses: bool = true,
     log_file: ?[]const u8 = null,

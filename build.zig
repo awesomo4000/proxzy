@@ -17,6 +17,11 @@ pub fn build(b: *std.Build) void {
     const libcurl = vendor.buildCurl(b, target, optimize);
     libcurl.linkLibrary(mbedtls);
 
+    // Expose library artifacts for consumers using proxzy as a dependency
+    // Consumers can link via: exe.linkLibrary(proxzy_dep.artifact("curl"));
+    b.installArtifact(libcurl);
+    b.installArtifact(mbedtls);
+
     // Create curl_c module for C imports
     const curl_c_module = b.createModule(.{
         .root_source_file = b.path("src/curl_c.zig"),

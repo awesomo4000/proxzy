@@ -41,4 +41,38 @@ pub fn build(
     example_roundtrip.linkLibrary(libcurl);
     example_roundtrip.linkLibrary(mbedtls);
     example_step.dependOn(&b.addInstallArtifact(example_roundtrip, .{}).step);
+
+    // Example: SSE logging (chunks vs events)
+    const example_sse_logging = b.addExecutable(.{
+        .name = "proxzy-sse-logging",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/sse_logging.zig"),
+            .target = lib_module.resolved_target,
+            .optimize = lib_module.optimize,
+            .imports = &.{
+                .{ .name = "proxzy", .module = lib_module },
+            },
+        }),
+    });
+    example_sse_logging.linkLibC();
+    example_sse_logging.linkLibrary(libcurl);
+    example_sse_logging.linkLibrary(mbedtls);
+    example_step.dependOn(&b.addInstallArtifact(example_sse_logging, .{}).step);
+
+    // Example: SSE JSON transform
+    const example_sse_json = b.addExecutable(.{
+        .name = "proxzy-sse-json-transform",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/sse_json_transform.zig"),
+            .target = lib_module.resolved_target,
+            .optimize = lib_module.optimize,
+            .imports = &.{
+                .{ .name = "proxzy", .module = lib_module },
+            },
+        }),
+    });
+    example_sse_json.linkLibC();
+    example_sse_json.linkLibrary(libcurl);
+    example_sse_json.linkLibrary(mbedtls);
+    example_step.dependOn(&b.addInstallArtifact(example_sse_json, .{}).step);
 }

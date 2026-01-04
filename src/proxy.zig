@@ -19,9 +19,14 @@ const StreamContext = struct {
     fn writeChunk(ctx_ptr: *anyopaque, chunk: []const u8) void {
         const self = @as(*StreamContext, @ptrCast(@alignCast(ctx_ptr)));
 
-        // Debug: show chunk size and preview
+        // Debug: show chunk size and preview (trim newlines for readability)
         const preview_len = @min(chunk.len, 200);
-        std.debug.print("[SSE chunk] {d} bytes: {s}\n", .{ chunk.len, chunk[0..preview_len] });
+        const preview = std.mem.trim(u8, chunk[0..preview_len], "\n\r");
+        if (preview.len > 0) {
+            std.debug.print("[SSE chunk] {d} bytes: {s}\n", .{ chunk.len, preview });
+        } else {
+            std.debug.print("[SSE chunk] {d} bytes: (whitespace)\n", .{chunk.len});
+        }
 
         self.stream.writeAll(chunk) catch |err| {
             std.debug.print("SSE write error: {}\n", .{err});

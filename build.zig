@@ -137,6 +137,13 @@ pub fn build(b: *std.Build) void {
     const run_middleware_tests = b.addRunArtifact(middleware_tests);
     test_step.dependOn(&run_middleware_tests.step);
 
+    // Config tests
+    const config_tests = b.addTest(.{
+        .root_module = config_module,
+    });
+    const run_config_tests = b.addRunArtifact(config_tests);
+    test_step.dependOn(&run_config_tests.step);
+
     // Examples
     examples.build(b, lib_module, libcurl, mbedtls);
 }

@@ -8,18 +8,31 @@ pub const Config = struct {
     log_requests: bool = true,
     log_responses: bool = true,
     log_file: ?[]const u8 = null,
-    verbose: bool = false,
+    verbosity: u8 = 0,
     middleware_factory: ?middleware_mod.MiddlewareFactory = null,
 
     pub fn parse(allocator: std.mem.Allocator) !Config {
-        var config = Config{};
         var args = try std.process.argsWithAllocator(allocator);
         defer args.deinit();
 
         // Skip program name
         _ = args.skip();
 
+        // Collect args into slice for parseArgs
+        var arg_list: std.ArrayList([]const u8) = .{};
+        defer arg_list.deinit(allocator);
         while (args.next()) |arg| {
+            try arg_list.append(allocator, arg);
+        }
+
+        return parseArgs(arg_list.items);
+    }
+
+    /// Parse config from a slice of arguments (for testing)
+    pub fn parseArgs(args: []const []const u8) Config {
+        var config = Config{};
+
+        for (args) |arg| {
             if (std.mem.startsWith(u8, arg, "--port=")) {
                 const port_str = arg["--port=".len..];
                 config.port = std.fmt.parseInt(u16, port_str, 10) catch 8080;
@@ -37,8 +50,24 @@ pub const Config = struct {
                 config.log_file = arg["--log-file=".len..];
             } else if (std.mem.startsWith(u8, arg, "--ca-cert=")) {
                 config.ca_cert_path = arg["--ca-cert=".len..];
-            } else if (std.mem.eql(u8, arg, "-v") or std.mem.eql(u8, arg, "--verbose")) {
-                config.verbose = true;
+            } else if (std.mem.startsWith(u8, arg, "-v")) {
+                // Count 'v' characters: -v = 1, -vv = 2, -vvv = 3 (capped)
+                const v_count = arg.len - 1; // subtract the leading '-'
+                if (v_count > 0) {
+                    // Verify all characters after '-' are 'v'
+                    var all_v = true;
+                    for (arg[1..]) |c| {
+                        if (c != 'v') {
+                            all_v = false;
+                            break;
+                        }
+                    }
+                    if (all_v) {
+                        config.verbosity = @intCast(@min(v_count, 3));
+                    }
+                }
+            } else if (std.mem.eql(u8, arg, "--verbose")) {
+                config.verbosity = 1;
             } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
                 printUsage();
                 std.process.exit(0);
@@ -63,7 +92,9 @@ pub const Config = struct {
             \\  --log-responses       Log response details (default: on)
             \\  --no-log-responses    Disable response logging
             \\  --log-file=PATH       Log to file (default: stdout)
-            \\  -v, --verbose         Verbose output
+            \\  -v                    Verbosity level 1: request/response summary
+            \\  -vv                   Verbosity level 2: + headers
+            \\  -vvv                  Verbosity level 3: + body preview, SSE chunks
             \\  -h, --help            Show this help
             \\
             \\Example:
@@ -74,3 +105,74 @@ pub const Config = struct {
         std.debug.print("{s}\n", .{usage});
     }
 };
+
+// Unit tests for config parsing
+test "verbosity: default is 0" {
+    const config = Config.parseArgs(&.{});
+    try std.testing.expectEqual(@as(u8, 0), config.verbosity);
+}
+
+test "verbosity: -v sets level 1" {
+    const config = Config.parseArgs(&.{"-v"});
+    try std.testing.expectEqual(@as(u8, 1), config.verbosity);
+}
+
+test "verbosity: -vv sets level 2" {
+    const config = Config.parseArgs(&.{"-vv"});
+    try std.testing.expectEqual(@as(u8, 2), config.verbosity);
+}
+
+test "verbosity: -vvv sets level 3" {
+    const config = Config.parseArgs(&.{"-vvv"});
+    try std.testing.expectEqual(@as(u8, 3), config.verbosity);
+}
+
+test "verbosity: -vvvv caps at level 3" {
+    const config = Config.parseArgs(&.{"-vvvv"});
+    try std.testing.expectEqual(@as(u8, 3), config.verbosity);
+}
+
+test "verbosity: -vvvvvvvv caps at level 3" {
+    const config = Config.parseArgs(&.{"-vvvvvvvv"});
+    try std.testing.expectEqual(@as(u8, 3), config.verbosity);
+}
+
+test "verbosity: --verbose sets level 1" {
+    const config = Config.parseArgs(&.{"--verbose"});
+    try std.testing.expectEqual(@as(u8, 1), config.verbosity);
+}
+
+test "verbosity: -vx is ignored (not all v's)" {
+    const config = Config.parseArgs(&.{"-vx"});
+    try std.testing.expectEqual(@as(u8, 0), config.verbosity);
+}
+
+test "verbosity: -va is ignored (not all v's)" {
+    const config = Config.parseArgs(&.{"-va"});
+    try std.testing.expectEqual(@as(u8, 0), config.verbosity);
+}
+
+test "verbosity: later flag wins" {
+    const config = Config.parseArgs(&.{ "-vvv", "-v" });
+    try std.testing.expectEqual(@as(u8, 1), config.verbosity);
+}
+
+test "port: default is 8080" {
+    const config = Config.parseArgs(&.{});
+    try std.testing.expectEqual(@as(u16, 8080), config.port);
+}
+
+test "port: --port=9000 sets port" {
+    const config = Config.parseArgs(&.{"--port=9000"});
+    try std.testing.expectEqual(@as(u16, 9000), config.port);
+}
+
+test "log flags: --no-log-requests disables request logging" {
+    const config = Config.parseArgs(&.{"--no-log-requests"});
+    try std.testing.expectEqual(false, config.log_requests);
+}
+
+test "log flags: --no-log-responses disables response logging" {
+    const config = Config.parseArgs(&.{"--no-log-responses"});
+    try std.testing.expectEqual(false, config.log_responses);
+}

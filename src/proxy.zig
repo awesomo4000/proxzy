@@ -14,22 +14,19 @@ pub const Context = struct {
 /// Context passed to streaming callback
 const StreamContext = struct {
     stream: std.net.Stream,
+    logger: *logging_mod.Logger,
     bytes_written: usize = 0,
 
     fn writeChunk(ctx_ptr: *anyopaque, chunk: []const u8) void {
         const self = @as(*StreamContext, @ptrCast(@alignCast(ctx_ptr)));
 
-        // Debug: show chunk size and preview (trim newlines for readability)
+        // Log chunk through Logger at verbosity level 3
         const preview_len = @min(chunk.len, 200);
         const preview = std.mem.trim(u8, chunk[0..preview_len], "\n\r");
-        if (preview.len > 0) {
-            std.debug.print("[SSE chunk] {d} bytes: {s}\n", .{ chunk.len, preview });
-        } else {
-            std.debug.print("[SSE chunk] {d} bytes: (whitespace)\n", .{chunk.len});
-        }
+        self.logger.logSSEChunk(chunk.len, preview);
 
         self.stream.writeAll(chunk) catch |err| {
-            std.debug.print("SSE write error: {}\n", .{err});
+            self.logger.logError(err, "SSE write error");
         };
         self.bytes_written += chunk.len;
     }
@@ -99,6 +96,7 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
     // Create streaming context
     var stream_ctx = StreamContext{
         .stream = client_stream,
+        .logger = &ctx.logger,
     };
     stream_ctx.setNoDelay(); // Disable Nagle for low-latency streaming
 
@@ -119,7 +117,7 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
     defer streaming_response.deinit();
 
     const elapsed = std.time.milliTimestamp() - start_time;
-    std.debug.print("[SSE] Streamed {d} bytes in {d}ms\n", .{ stream_ctx.bytes_written, elapsed });
+    ctx.logger.logDebug("SSE streamed {d} bytes in {d}ms", .{ stream_ctx.bytes_written, elapsed });
 
     // Close the client stream to signal end of SSE
     client_stream.close();

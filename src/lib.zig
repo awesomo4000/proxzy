@@ -40,7 +40,7 @@ pub const Proxy = struct {
         const logger = Logger.init(
             config.log_requests,
             config.log_responses,
-            config.verbose,
+            config.verbosity,
         );
 
         var self = Proxy{

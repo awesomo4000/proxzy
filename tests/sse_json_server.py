@@ -11,7 +11,7 @@ class SSEHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
-            self.send_header('Connection', 'keep-alive')
+            self.send_header('Connection', 'close')  # Close after stream ends
             self.end_headers()
 
             # Simulate LLM-style streaming responses

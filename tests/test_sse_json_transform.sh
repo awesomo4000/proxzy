@@ -26,7 +26,7 @@ fi
 # Start JSON SSE test server
 python3 "$SERVER_SCRIPT" &
 SERVER_PID=$!
-sleep 1
+sleep 0.2
 
 # Verify server is running
 if ! curl -s http://127.0.0.1:$PORT/ | grep -q "JSON SSE test server"; then

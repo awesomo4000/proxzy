@@ -6,7 +6,7 @@ import json
 import time
 
 # Delay between events (seconds) - keep short for fast tests
-EVENT_DELAY = 0.05
+EVENT_DELAY = 0.01
 
 class SSEHandler(BaseHTTPRequestHandler):
     def do_GET(self):

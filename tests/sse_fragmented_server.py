@@ -9,8 +9,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import time
 
 # Delays (seconds) - keep short for fast tests
-FRAGMENT_DELAY = 0.01  # Between fragments of same event
-EVENT_DELAY = 0.02     # Between complete events
+FRAGMENT_DELAY = 0.005  # Between fragments of same event
+EVENT_DELAY = 0.01      # Between complete events
 
 class FragmentedSSEHandler(BaseHTTPRequestHandler):
     def do_GET(self):

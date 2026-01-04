@@ -31,12 +31,12 @@ fi
 # Start echo server
 python3 "$ECHO_SERVER" &
 ECHO_PID=$!
-sleep 0.5
+sleep 0.2
 
 # Start proxy pointing to echo server
 "$PROXY_BIN" "http://127.0.0.1:$ECHO_PORT" &
 PROXY_PID=$!
-sleep 0.5
+sleep 0.2
 
 # Test: send body with "purple-lynx", should get it back (restored from placeholder)
 echo "Testing roundtrip transform (body replacement)..."

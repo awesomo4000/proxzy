@@ -5,6 +5,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import time
 
+# Delay between events (seconds) - keep short for fast tests
+EVENT_DELAY = 0.05
+
 class SSEHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/stream':
@@ -29,7 +32,7 @@ class SSEHandler(BaseHTTPRequestHandler):
                 self.wfile.write(event.encode())
                 self.wfile.flush()
                 print(f"Sent: {event.strip()}")
-                time.sleep(0.3)
+                time.sleep(EVENT_DELAY)
 
             # Final event
             self.wfile.write(b"data: [DONE]\n\n")

@@ -4,6 +4,9 @@
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import time
 
+# Delay between events (seconds) - keep short for fast tests
+EVENT_DELAY = 0.05
+
 class SSEHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/events':
@@ -13,13 +16,13 @@ class SSEHandler(BaseHTTPRequestHandler):
             self.send_header('Connection', 'close')  # Close after stream ends
             self.end_headers()
 
-            # Send 5 events, one per second
+            # Send 5 events
             for i in range(5):
                 event = f"data: Event {i+1} at {time.time()}\n\n"
                 self.wfile.write(event.encode())
                 self.wfile.flush()
                 print(f"Sent: {event.strip()}")
-                time.sleep(1)
+                time.sleep(EVENT_DELAY)
 
             # Final event
             self.wfile.write(b"data: [DONE]\n\n")

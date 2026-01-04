@@ -75,4 +75,21 @@ pub fn build(
     example_sse_json.linkLibrary(libcurl);
     example_sse_json.linkLibrary(mbedtls);
     example_step.dependOn(&b.addInstallArtifact(example_sse_json, .{}).step);
+
+    // Example: SSE accumulator test (verifies chunk accumulation)
+    const example_sse_accum = b.addExecutable(.{
+        .name = "proxzy-sse-accumulator-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/sse_accumulator_test.zig"),
+            .target = lib_module.resolved_target,
+            .optimize = lib_module.optimize,
+            .imports = &.{
+                .{ .name = "proxzy", .module = lib_module },
+            },
+        }),
+    });
+    example_sse_accum.linkLibC();
+    example_sse_accum.linkLibrary(libcurl);
+    example_sse_accum.linkLibrary(mbedtls);
+    example_step.dependOn(&b.addInstallArtifact(example_sse_accum, .{}).step);
 }

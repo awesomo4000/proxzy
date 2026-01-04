@@ -207,6 +207,7 @@ pub const Client = struct {
         timeout_secs: c_long = 120,
         connect_timeout_secs: c_long = 30,
         ca_cert_path: ?[]const u8 = null,
+        ca_cert_blob: ?[]const u8 = null,
     };
 
     /// Make an HTTP request. The allocator should be a per-request arena
@@ -270,11 +271,18 @@ pub const Client = struct {
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYPEER, @as(c_long, 1));
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYHOST, @as(c_long, 2));
 
-        // CA certificate path - use provided path or fall back to system default
+        // CA certificate - priority: CLI path > embedded blob > system default
         if (options.ca_cert_path) |ca_path| {
             const ca_path_z = try allocator.dupeZ(u8, ca_path);
             defer allocator.free(ca_path_z);
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, ca_path_z.ptr);
+        } else if (options.ca_cert_blob) |cert_data| {
+            const cert_blob = c.curl_blob{
+                .data = @ptrCast(@constCast(cert_data.ptr)),
+                .len = cert_data.len,
+                .flags = c.CURL_BLOB_NOCOPY,
+            };
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
         } else {
             // Fall back to common system paths
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, "/etc/ssl/cert.pem");
@@ -354,6 +362,7 @@ pub const Client = struct {
         headers: []const RequestHeader = &.{},
         body: ?[]const u8 = null,
         ca_cert_path: ?[]const u8 = null,
+        ca_cert_blob: ?[]const u8 = null,
 
         /// Output callback - receives data to write to client
         on_data: StreamCallback,
@@ -438,10 +447,18 @@ pub const Client = struct {
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYPEER, @as(c_long, 1));
         _ = c.curl_easy_setopt(curl, c.CURLOPT_SSL_VERIFYHOST, @as(c_long, 2));
 
+        // CA certificate - priority: CLI path > embedded blob > system default
         if (options.ca_cert_path) |ca_path| {
             const ca_path_z = try allocator.dupeZ(u8, ca_path);
             defer allocator.free(ca_path_z);
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, ca_path_z.ptr);
+        } else if (options.ca_cert_blob) |cert_data| {
+            const cert_blob = c.curl_blob{
+                .data = @ptrCast(@constCast(cert_data.ptr)),
+                .len = cert_data.len,
+                .flags = c.CURL_BLOB_NOCOPY,
+            };
+            _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO_BLOB, &cert_blob);
         } else {
             _ = c.curl_easy_setopt(curl, c.CURLOPT_CAINFO, "/etc/ssl/cert.pem");
         }

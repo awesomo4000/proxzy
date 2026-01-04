@@ -34,6 +34,11 @@ pub const Proxy = struct {
 
     /// Initialize a new proxy server
     pub fn init(allocator: std.mem.Allocator, config: Config) !Proxy {
+        // Validate required config
+        if (config.upstream_url == null) {
+            return error.UpstreamUrlRequired;
+        }
+
         var client = try Client.init();
         errdefer client.deinit();
 
@@ -90,6 +95,6 @@ pub const Proxy = struct {
 
     /// Get the upstream URL
     pub fn upstreamUrl(self: *const Proxy) []const u8 {
-        return self.ctx.config.upstream_url;
+        return self.ctx.config.upstream_url.?;
     }
 };

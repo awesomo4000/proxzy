@@ -3,8 +3,9 @@ const middleware_mod = @import("middleware");
 
 pub const Config = struct {
     port: u16 = 8080,
-    upstream_url: []const u8 = "https://httpbin.org",
+    upstream_url: ?[]const u8 = null,
     ca_cert_path: ?[]const u8 = null,
+    ca_cert_blob: ?[]const u8 = null,
     log_requests: bool = true,
     log_responses: bool = true,
     log_file: ?[]const u8 = null,
@@ -85,7 +86,7 @@ pub const Config = struct {
             \\
             \\Options:
             \\  --port=PORT           Listen port (default: 8080)
-            \\  --upstream=URL        Upstream URL (default: https://httpbin.org)
+            \\  --upstream=URL        Upstream URL (required)
             \\  --ca-cert=PATH        CA certificate bundle for TLS (PEM format)
             \\  --log-requests        Log request details (default: on)
             \\  --no-log-requests     Disable request logging

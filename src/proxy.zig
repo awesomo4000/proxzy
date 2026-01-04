@@ -58,14 +58,15 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
 
     // Build upstream URL
     var upstream_url_buf: [4096]u8 = undefined;
+    const upstream_base = ctx.config.upstream_url.?;
     const upstream_url = if (query.len > 0)
-        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}?{s}", .{ ctx.config.upstream_url, path, query }) catch {
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}?{s}", .{ upstream_base, path, query }) catch {
             res.status = 400;
             res.body = "URL too long";
             return;
         }
     else
-        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}", .{ ctx.config.upstream_url, path }) catch {
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}", .{ upstream_base, path }) catch {
             res.status = 400;
             res.body = "URL too long";
             return;
@@ -106,6 +107,7 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
         .headers = headers_to_forward.items,
         .body = req.body(),
         .ca_cert_path = ctx.config.ca_cert_path,
+        .ca_cert_blob = ctx.config.ca_cert_blob,
         .on_data = StreamContext.writeChunk,
         .data_ctx = @ptrCast(&stream_ctx),
     }) catch |err| {
@@ -171,14 +173,15 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
 
     // Build upstream URL
     var upstream_url_buf: [4096]u8 = undefined;
+    const upstream_base = ctx.config.upstream_url.?;
     const upstream_url = if (mw_req.query.len > 0)
-        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}?{s}", .{ ctx.config.upstream_url, mw_req.path, mw_req.query }) catch {
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}?{s}", .{ upstream_base, mw_req.path, mw_req.query }) catch {
             res.status = 400;
             res.body = "URL too long";
             return;
         }
     else
-        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}", .{ ctx.config.upstream_url, mw_req.path }) catch {
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}", .{ upstream_base, mw_req.path }) catch {
             res.status = 400;
             res.body = "URL too long";
             return;
@@ -204,6 +207,7 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         .headers = headers_to_forward.items,
         .body = mw_req.body,
         .ca_cert_path = ctx.config.ca_cert_path,
+        .ca_cert_blob = ctx.config.ca_cert_blob,
     }) catch |err| {
         ctx.logger.logError(err, "upstream request failed");
 

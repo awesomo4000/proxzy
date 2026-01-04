@@ -76,13 +76,29 @@ pub const RequestHeader = struct {
 /// Callback for streaming responses - called for each chunk of body data
 pub const StreamCallback = *const fn (ctx: *anyopaque, chunk: []const u8) void;
 
+/// Callback for complete SSE events - called after accumulating until \n\n
+/// Return transformed event bytes, or null to passthrough original
+pub const SSEEventCallback = *const fn (ctx: *anyopaque, event: []const u8, allocator: std.mem.Allocator) ?[]const u8;
+
 /// Context for streaming write callback
 const StreamingResponseData = struct {
     allocator: std.mem.Allocator,
     headers: std.ArrayList(Response.Header),
-    stream_callback: StreamCallback,
-    stream_ctx: *anyopaque,
-    headers_done: bool = false,
+
+    // Raw chunk callback (optional)
+    stream_callback: ?StreamCallback = null,
+    stream_ctx: ?*anyopaque = null,
+
+    // SSE event callback (optional) - if set, we accumulate
+    sse_event_callback: ?SSEEventCallback = null,
+    sse_event_ctx: ?*anyopaque = null,
+
+    // Accumulation buffer for SSE events
+    pending: std.ArrayList(u8) = .{},
+
+    // Output callback - writes to client
+    output_callback: StreamCallback,
+    output_ctx: *anyopaque,
 };
 
 fn streamingWriteCallback(ptr: [*c]u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize {
@@ -90,9 +106,54 @@ fn streamingWriteCallback(ptr: [*c]u8, size: usize, nmemb: usize, userdata: ?*an
     const real_size = size * nmemb;
     const chunk = ptr[0..real_size];
 
-    // Forward chunk directly to stream callback
-    data.stream_callback(data.stream_ctx, chunk);
+    // Call raw chunk callback if set (for logging/debugging)
+    if (data.stream_callback) |cb| {
+        cb(data.stream_ctx.?, chunk);
+    }
+
+    // If SSE event callback is set, accumulate and process complete events
+    if (data.sse_event_callback != null) {
+        // Append chunk to pending buffer
+        data.pending.appendSlice(data.allocator, chunk) catch return 0;
+
+        // Process all complete SSE events (ending with \n\n)
+        processCompleteEvents(data);
+    } else {
+        // No SSE callback - just forward raw chunks
+        data.output_callback(data.output_ctx, chunk);
+    }
+
     return real_size;
+}
+
+/// Find and process complete SSE events in the pending buffer
+fn processCompleteEvents(data: *StreamingResponseData) void {
+    while (findEventBoundary(data.pending.items)) |end_pos| {
+        const event = data.pending.items[0..end_pos];
+
+        // Call SSE event callback for transformation
+        const output = if (data.sse_event_callback) |cb| blk: {
+            const transformed = cb(data.sse_event_ctx.?, event, data.allocator);
+            break :blk transformed orelse event;
+        } else event;
+
+        // Write to client
+        data.output_callback(data.output_ctx, output);
+
+        // Remove processed event from buffer
+        const remaining = data.pending.items[end_pos..];
+        std.mem.copyForwards(u8, data.pending.items[0..remaining.len], remaining);
+        data.pending.items.len = remaining.len;
+    }
+}
+
+/// Find the end of a complete SSE event (after \n\n)
+fn findEventBoundary(buf: []const u8) ?usize {
+    // SSE events end with \n\n
+    if (std.mem.indexOf(u8, buf, "\n\n")) |pos| {
+        return pos + 2; // Include the \n\n
+    }
+    return null;
 }
 
 fn streamingHeaderCallback(ptr: [*c]u8, size: usize, nmemb: usize, userdata: ?*anyopaque) callconv(.c) usize {
@@ -293,10 +354,22 @@ pub const Client = struct {
         headers: []const RequestHeader = &.{},
         body: ?[]const u8 = null,
         ca_cert_path: ?[]const u8 = null,
-        /// Callback receives body chunks as they arrive
-        on_chunk: StreamCallback,
+
+        /// Output callback - receives data to write to client
+        on_data: StreamCallback,
+        /// Context passed to on_data callback
+        data_ctx: *anyopaque,
+
+        /// Optional: Raw chunk callback for logging/debugging (called before accumulation)
+        on_chunk: ?StreamCallback = null,
         /// Context passed to on_chunk callback
-        chunk_ctx: *anyopaque,
+        chunk_ctx: ?*anyopaque = null,
+
+        /// Optional: SSE event callback - if set, chunks are accumulated until \n\n
+        /// Return transformed event bytes, or null for passthrough
+        on_sse_event: ?SSEEventCallback = null,
+        /// Context passed to on_sse_event callback
+        sse_event_ctx: ?*anyopaque = null,
     };
 
     /// Make a streaming HTTP request. Body data is passed to the callback
@@ -383,6 +456,10 @@ pub const Client = struct {
             .headers = .{},
             .stream_callback = options.on_chunk,
             .stream_ctx = options.chunk_ctx,
+            .sse_event_callback = options.on_sse_event,
+            .sse_event_ctx = options.sse_event_ctx,
+            .output_callback = options.on_data,
+            .output_ctx = options.data_ctx,
         };
         errdefer {
             for (response_data.headers.items) |header| {
@@ -390,6 +467,7 @@ pub const Client = struct {
                 allocator.free(header.value);
             }
             response_data.headers.deinit(allocator);
+            response_data.pending.deinit(allocator);
         }
 
         _ = c.curl_easy_setopt(curl, c.CURLOPT_WRITEFUNCTION, streamingWriteCallback);
@@ -404,6 +482,12 @@ pub const Client = struct {
             std.debug.print("curl streaming error: {s}\n", .{err_str});
             return error.CurlRequestFailed;
         }
+
+        // Flush any remaining data in pending buffer
+        if (response_data.pending.items.len > 0) {
+            response_data.output_callback(response_data.output_ctx, response_data.pending.items);
+        }
+        response_data.pending.deinit(allocator);
 
         // Get response code
         var response_code: c_long = 0;

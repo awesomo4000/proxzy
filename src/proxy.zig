@@ -103,8 +103,8 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
         .headers = headers_to_forward.items,
         .body = req.body(),
         .ca_cert_path = ctx.config.ca_cert_path,
-        .on_chunk = StreamContext.writeChunk,
-        .chunk_ctx = @ptrCast(&stream_ctx),
+        .on_data = StreamContext.writeChunk,
+        .data_ctx = @ptrCast(&stream_ctx),
     }) catch |err| {
         ctx.logger.logError(err, "SSE upstream request failed");
         // Stream already started, close it

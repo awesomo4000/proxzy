@@ -4,18 +4,30 @@
 /// - Request: replaces "purple-lynx" with "[edit:color-animal-1234]"
 /// - Stores the mapping in per-request state
 /// - Response: replaces "[edit:color-animal-1234]" back to "purple-lynx"
+///
+/// Usage:
+///   ./proxzy-transform-roundtrip [upstream_url]
+///   ./proxzy-transform-roundtrip http://127.0.0.1:18080
 
 const std = @import("std");
 const proxzy = @import("proxzy");
+
+const DEFAULT_UPSTREAM = "http://127.0.0.1:18080";
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    // Get upstream URL from args or use default
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+    _ = args.skip(); // Skip program name
+    const upstream_url = args.next() orelse DEFAULT_UPSTREAM;
+
     var proxy = try proxzy.Proxy.init(allocator, .{
         .port = 9234,
-        .upstream_url = "https://httpbin.org",
+        .upstream_url = upstream_url,
         .middleware_factory = RoundtripMiddleware.create,
         .log_requests = false,
         .log_responses = false,
@@ -33,7 +45,7 @@ pub fn main() !void {
         \\
         \\  Expected:
         \\    1. Request sends: "I saw a [edit:color-animal-1234] in the forest"
-        \\    2. httpbin echoes the transformed text
+        \\    2. Echo server echoes the transformed text
         \\    3. Response shows original: "purple-lynx" restored
         \\
     , .{ proxy.port(), proxy.port() });

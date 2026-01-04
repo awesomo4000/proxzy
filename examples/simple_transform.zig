@@ -6,22 +6,28 @@
 /// 3. Implement onRequest and/or onResponse
 ///
 /// Usage:
-///   var proxy = try proxzy.Proxy.init(allocator, .{
-///       .upstream_url = "https://httpbin.org",
-///       .middleware_factory = SimpleMiddleware.create,
-///   });
+///   ./proxzy-transform-simple [upstream_url]
+///   ./proxzy-transform-simple http://127.0.0.1:18080
 
 const std = @import("std");
 const proxzy = @import("proxzy");
+
+const DEFAULT_UPSTREAM = "http://127.0.0.1:18080";
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    // Get upstream URL from args or use default
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
+    _ = args.skip(); // Skip program name
+    const upstream_url = args.next() orelse DEFAULT_UPSTREAM;
+
     var proxy = try proxzy.Proxy.init(allocator, .{
         .port = 9234,
-        .upstream_url = "https://httpbin.org",
+        .upstream_url = upstream_url,
         .middleware_factory = SimpleMiddleware.create,
         .log_requests = false,
         .log_responses = false,

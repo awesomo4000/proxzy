@@ -47,44 +47,41 @@ fn isSSERequest(req: *httpz.Request) bool {
     return false;
 }
 
-/// Handle SSE streaming request
-fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !void {
-    const start_time = std.time.milliTimestamp();
+/// Handle SSE streaming request (called after middleware processes request)
+fn handleSSERequest(
+    ctx: *Context,
+    mw_req: *const middleware_mod.Request,
+    res: *httpz.Response,
+    start_time: i64,
+) !void {
     const allocator = res.arena;
-
-    const method = @tagName(req.method);
-    const path = req.url.path;
-    const query = req.url.query;
 
     // Build upstream URL
     var upstream_url_buf: [4096]u8 = undefined;
     const upstream_base = ctx.config.upstream_url.?;
-    const upstream_url = if (query.len > 0)
-        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}?{s}", .{ upstream_base, path, query }) catch {
+    const upstream_url = if (mw_req.query.len > 0)
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}?{s}", .{ upstream_base, mw_req.path, mw_req.query }) catch {
             res.status = 400;
             res.body = "URL too long";
             return;
         }
     else
-        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}", .{ upstream_base, path }) catch {
+        std.fmt.bufPrint(&upstream_url_buf, "{s}{s}", .{ upstream_base, mw_req.path }) catch {
             res.status = 400;
             res.body = "URL too long";
             return;
         };
 
-    // Convert headers for client (skip Host)
+    // Convert middleware headers to client headers (skip Host)
     var headers_to_forward: std.ArrayList(client_mod.RequestHeader) = .{};
-    var header_iter = req.headers.iterator();
-    while (header_iter.next()) |header| {
-        if (!std.ascii.eqlIgnoreCase(header.key, "host")) {
+    for (mw_req.headers.items) |header| {
+        if (!std.ascii.eqlIgnoreCase(header.name, "host")) {
             try headers_to_forward.append(allocator, .{
-                .name = header.key,
+                .name = header.name,
                 .value = header.value,
             });
         }
     }
-
-    ctx.logger.logRequest(method, path, req.headers, req.body());
 
     // Start SSE stream to client - this writes headers immediately
     const client_stream = res.startEventStreamSync() catch |err| {
@@ -101,11 +98,11 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
     };
     stream_ctx.setNoDelay(); // Disable Nagle for low-latency streaming
 
-    // Make streaming upstream request - chunks go directly to client
+    // Make streaming upstream request with middleware-transformed body
     var streaming_response = ctx.client.requestStreaming(allocator, upstream_url, .{
-        .method = method,
+        .method = mw_req.method,
         .headers = headers_to_forward.items,
-        .body = req.body(),
+        .body = mw_req.body,
         .ca_cert_path = ctx.config.ca_cert_path,
         .ca_cert_blob = ctx.config.ca_cert_blob,
         .use_embedded_ca = ctx.config.use_embedded_ca,
@@ -123,15 +120,11 @@ fn handleSSERequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !v
     ctx.logger.logDebug("SSE streamed {d} bytes in {d}ms", .{ stream_ctx.bytes_written, elapsed });
 
     // Close the client stream to signal end of SSE
+    // Note: Response middleware is skipped for SSE (can't transform streaming response)
     client_stream.close();
 }
 
 pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !void {
-    // Check for SSE streaming request
-    if (isSSERequest(req)) {
-        return handleSSERequest(ctx, req, res);
-    }
-
     const start_time = std.time.milliTimestamp();
     const allocator = res.arena;
 
@@ -172,6 +165,14 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         }
     }
 
+    // Log request (after middleware transformation)
+    ctx.logger.logRequest(mw_req.method, mw_req.path, req.headers, mw_req.body);
+
+    // Check for SSE streaming request - middleware already applied
+    if (isSSERequest(req)) {
+        return handleSSERequest(ctx, &mw_req, res, start_time);
+    }
+
     // Build upstream URL
     var upstream_url_buf: [4096]u8 = undefined;
     const upstream_base = ctx.config.upstream_url.?;
@@ -198,9 +199,6 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
             });
         }
     }
-
-    // Log request
-    ctx.logger.logRequest(method, path, req.headers, mw_req.body);
 
     // Make upstream request
     const response = ctx.client.request(allocator, upstream_url, .{

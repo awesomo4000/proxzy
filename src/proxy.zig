@@ -138,6 +138,7 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
         factory(allocator)
     else
         null;
+    defer if (middleware) |mw| mw.deinit();
 
     // Build Request struct for middleware
     var request_headers: std.ArrayList(middleware_mod.Header) = .{};

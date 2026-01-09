@@ -161,6 +161,7 @@ pub const Middleware = struct {
     ptr: *anyopaque,
     onRequestFn: ?*const fn (ptr: *anyopaque, req: Request) ?Request,
     onResponseFn: ?*const fn (ptr: *anyopaque, res: Response) ?Response,
+    deinitFn: ?*const fn (ptr: *anyopaque) void = null,
 
     /// Handle a request. Returns modified request or null to use original.
     pub fn onRequest(self: Middleware, req: Request) ?Request {
@@ -178,11 +179,19 @@ pub const Middleware = struct {
         return null;
     }
 
+    /// Clean up middleware resources. Called after request completes (success, error, or connection drop).
+    pub fn deinit(self: Middleware) void {
+        if (self.deinitFn) |f| {
+            f(self.ptr);
+        }
+    }
+
     /// No-op middleware (passthrough)
     pub const passthrough = Middleware{
         .ptr = undefined,
         .onRequestFn = null,
         .onResponseFn = null,
+        .deinitFn = null,
     };
 };
 

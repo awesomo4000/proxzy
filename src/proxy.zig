@@ -39,18 +39,34 @@ const StreamContext = struct {
     }
 };
 
-/// Check if request wants SSE streaming
-fn isSSERequest(req: *httpz.Request) bool {
+/// Check if client wants streaming response (SSE)
+fn wantsStreaming(req: *httpz.Request) bool {
     if (req.header("accept")) |accept| {
         return std.mem.indexOf(u8, accept, "text/event-stream") != null;
     }
     return false;
 }
 
+/// Context for middleware SSE transformation
+const MiddlewareSSEWrapper = struct {
+    middleware: ?middleware_mod.Middleware,
+    allocator: std.mem.Allocator,
+
+    /// SSE callback that invokes middleware transformation
+    fn transform(ctx_ptr: *anyopaque, event: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
+        const self: *MiddlewareSSEWrapper = @ptrCast(@alignCast(ctx_ptr));
+        if (self.middleware) |mw| {
+            return mw.onSSE(event, allocator);
+        }
+        return null;
+    }
+};
+
 /// Handle SSE streaming request (called after middleware processes request)
-fn handleSSERequest(
+fn handleStreamingRequest(
     ctx: *Context,
     mw_req: *const middleware_mod.Request,
+    middleware: ?middleware_mod.Middleware,
     res: *httpz.Response,
     start_time: i64,
 ) !void {
@@ -98,6 +114,15 @@ fn handleSSERequest(
     };
     stream_ctx.setNoDelay(); // Disable Nagle for low-latency streaming
 
+    // Create middleware SSE wrapper for transformation
+    var mw_sse_wrapper = MiddlewareSSEWrapper{
+        .middleware = middleware,
+        .allocator = allocator,
+    };
+
+    // Determine if middleware has SSE handler
+    const has_sse_handler = if (middleware) |mw| mw.onSSEFn != null else false;
+
     // Make streaming upstream request with middleware-transformed body
     var streaming_response = ctx.client.requestStreaming(allocator, upstream_url, .{
         .method = mw_req.method,
@@ -108,6 +133,9 @@ fn handleSSERequest(
         .use_embedded_ca = ctx.config.use_embedded_ca,
         .on_data = StreamContext.writeChunk,
         .data_ctx = @ptrCast(&stream_ctx),
+        // Wire up middleware SSE transformation if available
+        .on_sse = if (has_sse_handler) MiddlewareSSEWrapper.transform else null,
+        .sse_ctx = if (has_sse_handler) @ptrCast(&mw_sse_wrapper) else null,
     }) catch |err| {
         ctx.logger.logError(err, "SSE upstream request failed");
         // Stream already started, close it
@@ -117,10 +145,10 @@ fn handleSSERequest(
     defer streaming_response.deinit();
 
     const elapsed = std.time.milliTimestamp() - start_time;
-    ctx.logger.logDebug("SSE streamed {d} bytes in {d}ms", .{ stream_ctx.bytes_written, elapsed });
+    const transform_status = if (has_sse_handler) " (with transforms)" else "";
+    ctx.logger.logDebug("SSE streamed {d} bytes in {d}ms{s}", .{ stream_ctx.bytes_written, elapsed, transform_status });
 
     // Close the client stream to signal end of SSE
-    // Note: Response middleware is skipped for SSE (can't transform streaming response)
     client_stream.close();
 }
 
@@ -170,8 +198,8 @@ pub fn handleRequest(ctx: *Context, req: *httpz.Request, res: *httpz.Response) !
     ctx.logger.logRequest(mw_req.method, mw_req.path, req.headers, mw_req.body);
 
     // Check for SSE streaming request - middleware already applied
-    if (isSSERequest(req)) {
-        return handleSSERequest(ctx, &mw_req, res, start_time);
+    if (wantsStreaming(req)) {
+        return handleStreamingRequest(ctx, &mw_req, middleware, res, start_time);
     }
 
     // Build upstream URL

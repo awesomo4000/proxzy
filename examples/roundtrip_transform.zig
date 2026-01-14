@@ -72,6 +72,7 @@ pub const RoundtripMiddleware = struct {
             .ptr = self,
             .onRequestFn = onRequest,
             .onResponseFn = onResponse,
+            .onSSEFn = onSSE,
         };
     }
 
@@ -97,7 +98,12 @@ pub const RoundtripMiddleware = struct {
         const transformed = replaceAll(self.allocator, body, SEARCH, REPLACE) catch return null;
 
         var new_req = req.clone() catch return null;
-        new_req.body = transformed;
+        new_req.setBody(transformed) catch return null;
+
+        // Update Content-Length to match new body size
+        var len_buf: [20]u8 = undefined;
+        const len_str = std.fmt.bufPrint(&len_buf, "{d}", .{transformed.len}) catch return null;
+        new_req.setHeader("Content-Length", len_str) catch return null;
 
         std.debug.print("[Middleware] Request:\n", .{});
         std.debug.print("  Original:    \"{s}\"\n", .{body});
@@ -132,6 +138,28 @@ pub const RoundtripMiddleware = struct {
             std.debug.print("[Middleware] Response: no placeholder found (unexpected)\n", .{});
             return null;
         }
+    }
+
+    /// Transform SSE streaming responses - restore placeholders in each event
+    fn onSSE(ptr: *anyopaque, event: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
+        const self: *RoundtripMiddleware = @ptrCast(@alignCast(ptr));
+
+        // Only restore if we have a stored mapping
+        if (self.original == null) {
+            return null;
+        }
+
+        // Check if event contains our placeholder
+        if (std.mem.indexOf(u8, event, REPLACE)) |_| {
+            // Restore original term
+            const restored = replaceAll(allocator, event, REPLACE, self.original.?) catch return null;
+
+            std.debug.print("[Middleware] SSE: Restored '{s}' -> '{s}'\n", .{ REPLACE, self.original.? });
+
+            return restored;
+        }
+
+        return null;
     }
 };
 

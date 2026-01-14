@@ -156,11 +156,16 @@ pub const Response = struct {
     }
 };
 
+/// Callback type for SSE transformation
+/// Takes event bytes and allocator, returns transformed bytes or null for passthrough
+pub const SSECallback = *const fn (ptr: *anyopaque, event: []const u8, allocator: std.mem.Allocator) ?[]const u8;
+
 /// Middleware interface - per-request handler instance
 pub const Middleware = struct {
     ptr: *anyopaque,
     onRequestFn: ?*const fn (ptr: *anyopaque, req: Request) ?Request,
     onResponseFn: ?*const fn (ptr: *anyopaque, res: Response) ?Response,
+    onSSEFn: ?SSECallback = null,
     deinitFn: ?*const fn (ptr: *anyopaque) void = null,
 
     /// Handle a request. Returns modified request or null to use original.
@@ -179,6 +184,15 @@ pub const Middleware = struct {
         return null;
     }
 
+    /// Handle an SSE chunk during streaming. Returns modified bytes or null for passthrough.
+    /// This is called for each complete SSE message (data ending with \n\n).
+    pub fn onSSE(self: Middleware, event: []const u8, allocator: std.mem.Allocator) ?[]const u8 {
+        if (self.onSSEFn) |f| {
+            return f(self.ptr, event, allocator);
+        }
+        return null;
+    }
+
     /// Clean up middleware resources. Called after request completes (success, error, or connection drop).
     pub fn deinit(self: Middleware) void {
         if (self.deinitFn) |f| {
@@ -191,6 +205,7 @@ pub const Middleware = struct {
         .ptr = undefined,
         .onRequestFn = null,
         .onResponseFn = null,
+        .onSSEFn = null,
         .deinitFn = null,
     };
 };
@@ -330,5 +345,72 @@ test "Middleware.passthrough returns null" {
     };
 
     const result = Middleware.passthrough.onRequest(req);
+    try testing.expect(result == null);
+}
+
+test "Middleware.passthrough.onSSE returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const event = "data: {\"content\": \"hello\"}\n\n";
+    const result = Middleware.passthrough.onSSE(event, allocator);
+    try testing.expect(result == null);
+}
+
+test "Middleware.onSSE calls callback and returns transformed data" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Simple transformer that uppercases the event
+    const TestTransformer = struct {
+        fn transform(_: *anyopaque, event: []const u8, alloc: std.mem.Allocator) ?[]const u8 {
+            var result = alloc.alloc(u8, event.len) catch return null;
+            for (event, 0..) |c, i| {
+                result[i] = std.ascii.toUpper(c);
+            }
+            return result;
+        }
+    };
+
+    var dummy: u8 = 0;
+    const mw = Middleware{
+        .ptr = @ptrCast(&dummy),
+        .onRequestFn = null,
+        .onResponseFn = null,
+        .onSSEFn = TestTransformer.transform,
+        .deinitFn = null,
+    };
+
+    const event = "data: hello\n\n";
+    const result = mw.onSSE(event, allocator);
+    try testing.expect(result != null);
+    try testing.expectEqualStrings("DATA: HELLO\n\n", result.?);
+}
+
+test "Middleware.onSSE returns null when callback returns null" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // Transformer that returns null (passthrough)
+    const PassthroughTransformer = struct {
+        fn transform(_: *anyopaque, _: []const u8, _: std.mem.Allocator) ?[]const u8 {
+            return null;
+        }
+    };
+
+    var dummy: u8 = 0;
+    const mw = Middleware{
+        .ptr = @ptrCast(&dummy),
+        .onRequestFn = null,
+        .onResponseFn = null,
+        .onSSEFn = PassthroughTransformer.transform,
+        .deinitFn = null,
+    };
+
+    const event = "data: unchanged\n\n";
+    const result = mw.onSSE(event, allocator);
     try testing.expect(result == null);
 }
